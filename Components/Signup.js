@@ -33,7 +33,7 @@ const Signup = ({ navigation }) => {
 
     try {
       console.log('Sending User:', newUser);
-      const response = await axios.post('http://192.168.1.43:3000/signup', newUser);
+      const response = await axios.post('http://192.168.1.51:3000/signup', newUser);
 
       console.log('Server Response:', response.data);
       setUsers([...users, { id: response.data.id || Math.random(), ...newUser }]);

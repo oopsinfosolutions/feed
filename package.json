@@ -10,6 +10,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@expo/vector-icons": "^14.1.0",
     "@react-native-masked-view/masked-view": "^0.3.2",
     "@react-navigation/drawer": "^7.3.12",
     "@react-navigation/material-top-tabs": "^7.2.13",
@@ -23,11 +24,13 @@
     "react-native": "0.79.2",
     "react-native-gesture-handler": "^2.25.0",
     "react-native-image-picker": "^8.2.1",
+    "react-native-linear-gradient": "^2.8.3",
     "react-native-pager-view": "^6.8.0",
     "react-native-paper": "^5.14.5",
     "react-native-reanimated": "^3.17.5",
     "react-native-safe-area-context": "^5.4.1",
-    "react-native-screens": "^4.10.0",
+    "react-native-screens": "^4.11.0",
+    "react-native-snap-carousel": "^3.9.1",
     "react-native-tab-view": "^4.1.0",
     "react-native-vector-icons": "^10.2.0"
   },
