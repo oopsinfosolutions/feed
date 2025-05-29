@@ -7,6 +7,7 @@ import {
   FlatList,
   StyleSheet,
   Alert,
+  SafeAreaView,
 } from 'react-native';
 import { Menu, Divider, Button } from 'react-native-paper';
 import axios from 'axios';
@@ -20,7 +21,6 @@ const Users = () => {
   const [menuVisible, setMenuVisible] = useState(false);
   const [users, setUsers] = useState([]);
 
-  // To track if editing mode is active
   const [isEditing, setIsEditing] = useState(false);
   const [editingEmail, setEditingEmail] = useState(null);
 
@@ -30,7 +30,6 @@ const Users = () => {
 
   const fetchUsers = async () => {
     try {
-      // According to your routes, GET '/' returns users
       const response = await axios.get('http://192.168.1.51:3000/');
       setUsers(response.data);
     } catch (error) {
@@ -61,8 +60,7 @@ const Users = () => {
     const newUser = { name, email, password, phone, type: role };
 
     try {
-      const response = await axios.post('http://192.168.1.51:3000/signup', newUser);
-      // Refresh users list after add
+      await axios.post('http://192.168.1.51:3000/signup', newUser);
       fetchUsers();
       clearForm();
       Alert.alert('Success', 'User added successfully!');
@@ -88,10 +86,9 @@ const Users = () => {
     setEmail(user.email);
     setPhone(user.phone);
     setRole(user.type);
-    // Do not fill password field for security, require re-entry if desired
     setPassword('');
     setIsEditing(true);
-    setEditingEmail(user.email); // Track which user is being edited
+    setEditingEmail(user.email);
   };
 
   const handleUpdateUser = async () => {
@@ -148,95 +145,95 @@ const Users = () => {
   );
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.heading}>Admin Panel - {isEditing ? 'Update User' : 'Add Users'}</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        <Text style={styles.heading}>Admin Panel - {isEditing ? 'Update User' : 'Add Users'}</Text>
 
-      <TextInput
-        style={[styles.input, isEditing && { backgroundColor: '#eee' }]}
-        placeholder="Enter name"
-        value={name}
-        onChangeText={setName}
-      />
+        <TextInput
+          style={[styles.input, isEditing && { backgroundColor: '#eee' }]}
+          placeholder="Enter name"
+          value={name}
+          onChangeText={setName}
+        />
 
-      <TextInput
-        style={[styles.input, { backgroundColor: isEditing ? '#eee' : '#fff' }]}
-        placeholder="Enter email"
-        keyboardType="email-address"
-        value={email}
-        editable={!isEditing} // email is read-only in edit mode
-        onChangeText={setEmail}
-      />
+        <TextInput
+          style={[styles.input, { backgroundColor: isEditing ? '#eee' : '#fff' }]}
+          placeholder="Enter email"
+          keyboardType="email-address"
+          value={email}
+          editable={!isEditing}
+          onChangeText={setEmail}
+        />
 
-      <TextInput
-        style={styles.input}
-        placeholder={isEditing ? "Enter new password" : "Enter password"}
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
+        <TextInput
+          style={styles.input}
+          placeholder={isEditing ? "Enter new password" : "Enter password"}
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+        />
 
-      <TextInput
-        style={styles.input}
-        placeholder="Enter phone number"
-        keyboardType="phone-pad"
-        value={phone}
-        onChangeText={setPhone}
-      />
+        <TextInput
+          style={styles.input}
+          placeholder="Enter phone number"
+          keyboardType="phone-pad"
+          value={phone}
+          onChangeText={setPhone}
+        />
 
-      <Menu
-        visible={menuVisible}
-        onDismiss={closeMenu}
-        anchor={
-          <Button
-            mode="outlined"
-            onPress={openMenu}
-            style={styles.menuButton}
-          >
-            {role}
-          </Button>
-        }
-      >
-        <Menu.Item onPress={() => { setRole('Client'); closeMenu(); }} title="Client" />
-        <Divider />
-        <Menu.Item onPress={() => { setRole('Dealer'); closeMenu(); }} title="Dealer" />
-        <Divider />
-        <Menu.Item onPress={() => { setRole('Employee'); closeMenu(); }} title="Employee" />
-      </Menu>
+        <Menu
+          visible={menuVisible}
+          onDismiss={closeMenu}
+          anchor={
+            <Button mode="outlined" onPress={openMenu} style={styles.menuButton}>
+              {role}
+            </Button>
+          }
+        >
+          <Menu.Item onPress={() => { setRole('Client'); closeMenu(); }} title="Client" />
+          <Divider />
+          <Menu.Item onPress={() => { setRole('Dealer'); closeMenu(); }} title="Dealer" />
+          <Divider />
+          <Menu.Item onPress={() => { setRole('Employee'); closeMenu(); }} title="Employee" />
+        </Menu>
 
-      {isEditing ? (
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <TouchableOpacity style={[styles.addButton, { flex: 1, marginRight: 10 }]} onPress={handleUpdateUser}>
-            <Text style={styles.addButtonText}>Update User</Text>
+        {isEditing ? (
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <TouchableOpacity style={[styles.addButton, { flex: 1, marginRight: 10 }]} onPress={handleUpdateUser}>
+              <Text style={styles.addButtonText}>Update User</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.cancelButton, { flex: 1 }]} onPress={clearForm}>
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.addButton} onPress={handleAddUser}>
+            <Text style={styles.addButtonText}>Add User</Text>
           </TouchableOpacity>
+        )}
 
-          <TouchableOpacity
-            style={[styles.cancelButton, { flex: 1 }]}
-            onPress={clearForm}
-          >
-            <Text style={styles.cancelButtonText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <TouchableOpacity style={styles.addButton} onPress={handleAddUser}>
-          <Text style={styles.addButtonText}>Add User</Text>
-        </TouchableOpacity>
-      )}
+        <Text style={styles.submittedUsersHeading}>Users:</Text>
 
-      <Text style={styles.submittedUsersHeading}>Users:</Text>
-      <FlatList
-        data={users}
-        keyExtractor={(item) => item.email}
-        renderItem={renderUser}
-      />
-    </View>
+        <FlatList
+          data={users}
+          keyExtractor={(item) => item.email}
+          renderItem={renderUser}
+          contentContainerStyle={{ paddingBottom: 100 }}
+        />
+      </View>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
   container: {
     flex: 1,
     padding: 20,
-    backgroundColor: '#f5f5f5',
   },
   heading: {
     fontSize: 24,

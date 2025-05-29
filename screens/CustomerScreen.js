@@ -1,23 +1,36 @@
 import React, { useState, useEffect } from 'react';
-import { SafeAreaView, StyleSheet, View, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import {
+  SafeAreaView,
+  StyleSheet,
+  View,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Image,
+} from 'react-native';
 import { TextInput, Button, Title, Card } from 'react-native-paper';
 import MaterialList from '../Components/MaterialList';
+import { launchImageLibrary } from 'react-native-image-picker';
+import axios from 'axios';
 
 export default function CustomerScreen() {
-  const [tab, setTab] = useState('Shipment'); // 'Shipment' or 'Materials'
+  const [tab, setTab] = useState('Shipment');
 
-  // Shipment Details states
+  // Form fields
   const [materialName, setMaterialName] = useState('');
   const [details, setDetails] = useState('');
   const [quantity, setQuantity] = useState('');
   const [price, setPrice] = useState('');
   const [totalPrice, setTotalPrice] = useState('');
   const [destination, setDestination] = useState('');
+  const [photo, setPhoto] = useState(null);
 
-  // Materials list for Materials tab
   const [materials, setMaterials] = useState([]);
 
-  // Calculate total price whenever quantity or price changes
+  // Track index of item being edited, null if adding new
+  const [editIndex, setEditIndex] = useState(null);
+
+  // Auto-calculate total price
   useEffect(() => {
     const q = parseFloat(quantity);
     const p = parseFloat(price);
@@ -28,37 +41,120 @@ export default function CustomerScreen() {
     }
   }, [quantity, price]);
 
-  // Add material to materials list
-  const handleAddMaterial = () => {
+  const handleChoosePhoto = () => {
+    launchImageLibrary({ mediaType: 'photo' }, (response) => {
+      if (response.didCancel) return;
+      if (response.errorCode) {
+        console.error('Image Picker Error:', response.errorMessage);
+        return;
+      }
+      const selected = response.assets?.[0];
+      if (selected) {
+        setPhoto(selected.uri);
+      }
+    });
+  };
+
+  // Add or update material on form submit, with axios POST to backend
+  const handleAddOrUpdateMaterial = async () => {
     if (materialName && details && quantity && price && destination) {
-      const newMaterial = {
-        name: materialName,
-        detail: details,
-        quantity,
-        price,
-        total: totalPrice,
-        destination,
-      };
-      setMaterials([...materials, newMaterial]);
-      // Clear form
-      setMaterialName('');
-      setDetails('');
-      setQuantity('');
-      setPrice('');
-      setDestination('');
-      setTotalPrice('');
-      alert('Material added!');
+      try {
+        const formData = new FormData();
+
+        formData.append('material_Name', materialName);
+        formData.append('detail', details);
+        formData.append('quantity', quantity);
+        formData.append('price_per_unit', price);
+        formData.append('destination', destination);
+
+        if (photo) {
+          const uriParts = photo.split('/');
+          const fileName = uriParts[uriParts.length - 1];
+          const fileType = fileName.split('.').pop();
+
+          formData.append('image', {
+            uri: photo,
+            name: fileName,
+            type: `image/${fileType === 'jpg' ? 'jpeg' : fileType}`,
+          });
+        }
+
+        const response = await axios.post('http://192.168.1.43:3000/add_shipment', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+
+        alert(response.data.message || 'Shipment added successfully!');
+
+        // Update local materials state
+        const newMaterial = {
+          name: materialName,
+          detail: details,
+          quantity,
+          price,
+          total: totalPrice,
+          destination,
+          photo,
+        };
+
+        if (editIndex !== null) {
+          const updatedMaterials = [...materials];
+          updatedMaterials[editIndex] = newMaterial;
+          setMaterials(updatedMaterials);
+        } else {
+          setMaterials([...materials, newMaterial]);
+        }
+
+        resetForm();
+        setTab('Materials');
+      } catch (error) {
+        console.error('Error uploading shipment:', error);
+        alert('Failed to add shipment. Please try again.');
+      }
     } else {
       alert('Please fill all fields.');
     }
   };
 
-  // Render Shipment tab content
+  // Reset form fields and edit mode
+  const resetForm = () => {
+    setMaterialName('');
+    setDetails('');
+    setQuantity('');
+    setPrice('');
+    setTotalPrice('');
+    setDestination('');
+    setPhoto(null);
+    setEditIndex(null);
+  };
+
+  // Remove material by index
+  const handleRemoveMaterial = (index) => {
+    const filtered = materials.filter((_, i) => i !== index);
+    setMaterials(filtered);
+  };
+
+  // Edit material by index: load data into form, switch tab
+  const handleEditMaterial = (index) => {
+    const material = materials[index];
+    setMaterialName(material.name);
+    setDetails(material.detail);
+    setQuantity(material.quantity);
+    setPrice(material.price);
+    setTotalPrice(material.total);
+    setDestination(material.destination);
+    setPhoto(material.photo);
+    setEditIndex(index);
+    setTab('Shipment');
+  };
+
+  // Shipment Details form UI
   const renderShipmentDetails = () => (
     <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
       <Card style={styles.card}>
         <Card.Content>
-          <Title style={styles.title}>Shipment Details</Title>
+          <Title style={styles.title}>{editIndex !== null ? 'Edit Shipment' : 'Shipment Details'}</Title>
 
           <TextInput
             label="Material Name"
@@ -111,19 +207,33 @@ export default function CustomerScreen() {
             onChangeText={setDestination}
           />
 
-          <Button
-            mode="contained"
-            style={styles.button}
-            onPress={handleAddMaterial}
-          >
-            Add Shipment
+          {photo && <Image source={{ uri: photo }} style={styles.imagePreview} />}
+          <Button mode="outlined" onPress={handleChoosePhoto} style={styles.input}>
+            {photo ? 'Change Photo' : 'Upload Photo'}
           </Button>
+
+          <Button mode="contained" style={styles.button} onPress={handleAddOrUpdateMaterial}>
+            {editIndex !== null ? 'Update Shipment' : 'Add Shipment'}
+          </Button>
+
+          {editIndex !== null && (
+            <Button
+              mode="text"
+              onPress={() => {
+                resetForm();
+                setTab('Materials');
+              }}
+              style={{ marginTop: 10 }}
+            >
+              Cancel Edit
+            </Button>
+          )}
         </Card.Content>
       </Card>
     </ScrollView>
   );
 
-  // Render Materials tab content
+  // Materials List UI
   const renderMaterialsDetails = () => (
     <View style={{ flex: 1 }}>
       <Title style={styles.title}>Materials List</Title>
@@ -132,14 +242,13 @@ export default function CustomerScreen() {
           No materials added yet.
         </Title>
       ) : (
-        <MaterialList materials={materials} />
+        <MaterialList materials={materials} onEdit={handleEditMaterial} onRemove={handleRemoveMaterial} />
       )}
     </View>
   );
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Tabs */}
       <View style={styles.tabContainer}>
         <Button
           mode={tab === 'Shipment' ? 'contained' : 'outlined'}
@@ -159,11 +268,7 @@ export default function CustomerScreen() {
         </Button>
       </View>
 
-      {/* Content */}
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {tab === 'Shipment' ? renderShipmentDetails() : renderMaterialsDetails()}
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -222,5 +327,11 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     backgroundColor: '#ff8c00',
     paddingVertical: 8,
+  },
+  imagePreview: {
+    width: '100%',
+    height: 200,
+    marginBottom: 15,
+    borderRadius: 12,
   },
 });

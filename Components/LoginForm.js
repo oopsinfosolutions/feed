@@ -6,41 +6,57 @@ import axios from 'axios';
 const LoginForm = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Validation', 'Please enter email and password');
+      Alert.alert('Validation Error', 'Please enter both email and password.');
       return;
     }
-
+  
+    setLoading(true);
+  
     try {
-      // Change localhost to your backend IP or domain if testing on real device
-      const response = await axios.post('http://192.168.1.51:3000/login', { email, password });
-
+      const response = await axios.post('http://192.168.1.43:3000/login', { email, password });
+  
       if (response.data.error) {
         Alert.alert('Login Failed', response.data.error);
       } else {
-        // Login success, navigate to CustomerScreen
-        if (response.data.type === 'Dealer') {
-          navigation.navigate('DealerScreen');
-        } else if (response.data.type === 'Client') {
-          navigation.navigate('CustomerScreen');
-        } else if (response.data.type === 'Employee') {
-          navigation.navigate('EmployeeScreen');
-        }
-        else if (response.data.type === 'admin') {
-          navigation.navigate('AdminScreen');
-        }
+        const { type } = response.data;
+  
+        // Defer navigation to avoid render-time state updates
+        setTimeout(() => {
+          switch (type) {
+            case 'Dealer':
+              navigation.navigate('DealerScreen');
+              break;
+            case 'Client':
+              navigation.navigate('CustomerScreen');
+              break;
+            case 'Employee':
+              navigation.navigate('EmployeeScreen');
+              break;
+            case 'admin':
+              navigation.navigate('AdminScreen');
+              break;
+            default:
+              Alert.alert('Error', 'Unknown user role');
+          }
+        }, 0);
       }
     } catch (error) {
       console.error('Login error:', error);
-      Alert.alert('Error', 'An error occurred during login. Please try again.');
+      Alert.alert('Error', 'Failed to connect to server. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
+  
 
   return (
     <SafeAreaView style={styles.container}>
       <Title style={styles.title}>Login</Title>
+
       <TextInput
         label="Email"
         value={email}
@@ -52,6 +68,7 @@ const LoginForm = ({ navigation }) => {
         keyboardType="email-address"
         autoCapitalize="none"
       />
+
       <TextInput
         label="Password"
         value={password}
@@ -62,15 +79,19 @@ const LoginForm = ({ navigation }) => {
         activeOutlineColor="#6200ee"
         left={<TextInput.Icon name="lock-outline" />}
       />
+
       <Button
         mode="contained"
         onPress={handleLogin}
         style={styles.button}
         contentStyle={styles.buttonContent}
         labelStyle={styles.buttonLabel}
+        loading={loading}
+        disabled={loading}
       >
-        Login
+        {loading ? 'Logging in...' : 'Login'}
       </Button>
+
       <Button
         onPress={() => navigation.navigate('Signup')}
         style={styles.link}
