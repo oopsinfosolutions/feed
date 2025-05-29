@@ -9,7 +9,9 @@ import Signup from './Components/Signup';
 import CustomerScreen from './screens/CustomerScreen';
 import Navbar from './Components/Navbar';
 import DealerScreen from './screens/DealerScreen';
-import AdminScreen from './screens/AdminScreen'; // 👈 Create this file
+import AdminScreen from './screens/AdminScreen';
+import Users from './screens/Admin/Users';
+
 
 // Placeholder Employee Screen
 const EmployeeScreen = () => (
@@ -32,6 +34,7 @@ export default function App() {
           <Stack.Screen name="EmployeeScreen" component={EmployeeScreen} />
           <Stack.Screen name="Navbar" component={Navbar} />
           <Stack.Screen name="AdminScreen" component={AdminScreen} />
+          <Stack.Screen name="Users" component={Users} />
         </Stack.Navigator>
       </NavigationContainer>
     </PaperProvider>

@@ -15,7 +15,7 @@ const LoginForm = ({ navigation }) => {
 
     try {
       // Change localhost to your backend IP or domain if testing on real device
-      const response = await axios.post('http://192.168.1.43:3000/login', { email, password });
+      const response = await axios.post('http://192.168.1.51:3000/login', { email, password });
 
       if (response.data.error) {
         Alert.alert('Login Failed', response.data.error);
