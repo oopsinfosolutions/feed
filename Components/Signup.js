@@ -12,10 +12,10 @@ import { Menu, Divider, Button } from 'react-native-paper';
 import axios from 'axios';
 
 const Signup = ({ navigation }) => {
-  const [name, setName] = useState('aniket');
-  const [email, setEmail] = useState('aniket@gmail.com');
-  const [password, setPassword] = useState('12345');
-  const [phone, setPhone] = useState('1234567890');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
   const [role, setRole] = useState('Select Role');
   const [menuVisible, setMenuVisible] = useState(false);
   const [users, setUsers] = useState([]);
@@ -33,7 +33,7 @@ const Signup = ({ navigation }) => {
 
     try {
       console.log('Sending User:', newUser);
-      const response = await axios.post('http://192.168.1.51:3000/signup', newUser);
+      const response = await axios.post('http://192.168.1.7:3000/signup', newUser);
 
       console.log('Server Response:', response.data);
       setUsers([...users, { id: response.data.id || Math.random(), ...newUser }]);

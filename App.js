@@ -11,6 +11,7 @@ import Navbar from './Components/Navbar';
 import DealerScreen from './screens/DealerScreen';
 import AdminScreen from './screens/AdminScreen';
 import Users from './screens/Admin/Users';
+import Material from './screens/Admin/Material';
 
 
 // Placeholder Employee Screen
@@ -35,6 +36,7 @@ export default function App() {
           <Stack.Screen name="Navbar" component={Navbar} />
           <Stack.Screen name="AdminScreen" component={AdminScreen} />
           <Stack.Screen name="Users" component={Users} />
+          <Stack.Screen name="Material" component={Material} />
         </Stack.Navigator>
       </NavigationContainer>
     </PaperProvider>
