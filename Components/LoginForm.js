@@ -46,55 +46,60 @@ const LoginForm = ({ navigation }) => {
       Alert.alert('Validation Error', 'Please enter both email and password.');
       return;
     }
-
+  
     if (!email.includes('@')) {
       Alert.alert('Validation Error', 'Please enter a valid email address.');
       return;
     }
-
+  
     setLoading(true);
-
+  
     try {
       const response = await axios.post('http://192.168.1.7:3000/login', {
         email: email.toLowerCase().trim(),
         password,
       });
-
+  
       if (response.data.error) {
         Alert.alert('Login Failed', response.data.error);
       } else {
         const { type, id } = response.data;
-
-        // Save user_id and user_type in AsyncStorage
-        await AsyncStorage.setItem('user_id', String(id));
-        await AsyncStorage.setItem('user_type', type);
-        await AsyncStorage.setItem('user_email', email.toLowerCase().trim());
-
-        // Show success message
-        Alert.alert('Success', 'Login successful!', [
-          {
-            text: 'OK',
-            onPress: () => {
-              // Navigate based on user type
-              switch (type) {
-                case 'Dealer':
-                  navigation.navigate('DealerScreen', { customerId: id });
-                  break;
-                case 'Client':
-                  navigation.navigate('CustomerScreen', { customerId: id });
-                  break;
-                case 'Employee':
-                  navigation.navigate('EmployeeScreen', { customerId: id });
-                  break;
-                case 'admin':
-                  navigation.navigate('AdminScreen', { customerId: id });
-                  break;
-                default:
-                  Alert.alert('Error', 'Unknown user role');
+  
+        try {
+          // Save user_id and user_type in AsyncStorage with error handling
+          await AsyncStorage.setItem('user_id', String(id));
+          await AsyncStorage.setItem('user_type', type);
+          await AsyncStorage.setItem('user_email', email.toLowerCase().trim());
+  
+          // Show success message
+          Alert.alert('Success', 'Login successful!', [
+            {
+              text: 'OK',
+              onPress: () => {
+                // Navigate based on user type
+                switch (type) {
+                  case 'Dealer':
+                    navigation.navigate('DealerScreen', { customerId: id });
+                    break;
+                  case 'Client':
+                    navigation.navigate('CustomerScreen', { customerId: id });
+                    break;
+                  case 'Employee':
+                    navigation.navigate('EmployeeScreen', { customerId: id });
+                    break;
+                  case 'admin':
+                    navigation.navigate('AdminScreen', { customerId: id });
+                    break;
+                  default:
+                    Alert.alert('Error', 'Unknown user role');
+                }
               }
             }
-          }
-        ]);
+          ]);
+        } catch (storageError) {
+          console.error('AsyncStorage error:', storageError);
+          Alert.alert('Storage Error', 'Failed to save login data. Please try again.');
+        }
       }
     } catch (error) {
       console.error('Login error:', error);
