@@ -7,13 +7,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Image,
   Animated,
   TouchableOpacity,
   Alert,
 } from 'react-native';
 import { TextInput, Button, Title, Card, Text } from 'react-native-paper';
-import { launchImageLibrary } from 'react-native-image-picker';
 import axios from 'axios';
 
 const CustomerScreen = ({ route }) => {
@@ -27,16 +25,8 @@ const CustomerScreen = ({ route }) => {
   const [materialName, setMaterialName] = useState('');
   const [materialDetails, setMaterialDetails] = useState('');
   const [quantity, setQuantity] = useState('');
-  const [pricePerUnit, setPricePerUnit] = useState('');
-  const [totalPrice, setTotalPrice] = useState('');
 
-  // Images - Updated to match backend field names
-  const [image1, setImage1] = useState(null);
-  const [image2, setImage2] = useState(null);
-  const [image3, setImage3] = useState(null);
-
-  // Location Details - Updated to match backend
-  const [pickupLocation, setPickupLocation] = useState('');
+  // Location Details - Only drop location now
   const [dropLocation, setDropLocation] = useState('');
 
   // Material List Management
@@ -45,7 +35,7 @@ const CustomerScreen = ({ route }) => {
   const [editingId, setEditingId] = useState(null);
 
   // Status field
-  const [status, setStatus] = useState('pending');
+  const [status, setStatus] = useState('Pending');
   const [user_id, setUser_id] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -117,17 +107,6 @@ const CustomerScreen = ({ route }) => {
     }).start();
   }, [tab]);
 
-  // Auto-calculate total price
-  useEffect(() => {
-    const q = parseFloat(quantity);
-    const p = parseFloat(pricePerUnit);
-    if (!isNaN(q) && !isNaN(p)) {
-      setTotalPrice((q * p).toFixed(2));
-    } else {
-      setTotalPrice('');
-    }
-  }, [quantity, pricePerUnit]);
-
   // Load shipments when user_id is available
   useEffect(() => {
     if (user_id) {
@@ -146,37 +125,86 @@ const CustomerScreen = ({ route }) => {
       setLoading(true);
       console.log('Loading shipments for user:', userId);
       
-      const response = await axios.get(`${API_BASE_URL}/shipment/user`, {
-        params: { user_id: userId },
-      });
+      // Try multiple API endpoints to fetch shipments
+      let response;
+      let shipments = [];
       
-      console.log('Shipments response:', response.data);
-      setMaterials(response.data || []);
+      // First try the user-specific endpoint
+      try {
+        console.log('Trying user-specific endpoint:', `${API_BASE_URL}/shipment/user?user_id=${userId}`);
+        response = await axios.get(`${API_BASE_URL}/shipment/user`, {
+          params: { user_id: userId },
+        });
+        shipments = response.data || [];
+        console.log('User-specific shipments response:', shipments);
+      } catch (userError) {
+        console.log('User-specific endpoint failed:', userError.message);
+        
+        // Try alternative endpoint with customer ID
+        try {
+          console.log('Trying customer-specific endpoint:', `${API_BASE_URL}/shipments/customer/${userId}`);
+          response = await axios.get(`${API_BASE_URL}/shipments/customer/${userId}`);
+          shipments = response.data || [];
+          console.log('Customer-specific shipments response:', shipments);
+        } catch (customerError) {
+          console.log('Customer-specific endpoint failed:', customerError.message);
+          
+          // Try getting all shipments and filter by user
+          try {
+            console.log('Trying all shipments endpoint:', `${API_BASE_URL}/shipments`);
+            response = await axios.get(`${API_BASE_URL}/shipments`);
+            const allShipments = response.data || [];
+            console.log('All shipments response:', allShipments);
+            
+            // Filter shipments by user ID (check multiple possible field names)
+            shipments = allShipments.filter(shipment => 
+              shipment.c_id == userId || 
+              shipment.user_id == userId || 
+              shipment.customer_id == userId ||
+              shipment.customerId == userId
+            );
+            console.log('Filtered shipments for user:', shipments);
+          } catch (allError) {
+            console.log('All shipments endpoint failed:', allError.message);
+            
+            // Last resort: try a generic GET with different parameter names
+            try {
+              console.log('Trying with c_id parameter:', `${API_BASE_URL}/shipment/user?c_id=${userId}`);
+              response = await axios.get(`${API_BASE_URL}/shipment/user`, {
+                params: { c_id: userId },
+              });
+              shipments = response.data || [];
+              console.log('c_id parameter shipments response:', shipments);
+            } catch (finalError) {
+              throw finalError;
+            }
+          }
+        }
+      }
+      
+      console.log('Final shipments data:', shipments);
+      setMaterials(shipments);
+      
+      if (shipments.length === 0) {
+        console.log('No shipments found for user ID:', userId);
+      }
+      
     } catch (error) {
       console.error('Error loading shipments:', error);
       if (error.response) {
         console.error('Error response:', error.response.data);
-        Alert.alert('Error', `Failed to load shipments: ${error.response.data.message || error.response.data.error || 'Unknown error'}`);
+        console.error('Error status:', error.response.status);
+        Alert.alert('Error', `Failed to load shipments: ${error.response.data.message || error.response.data.error || 'Unknown error'}\n\nStatus: ${error.response.status}`);
+      } else if (error.request) {
+        console.error('No response received:', error.request);
+        Alert.alert('Error', 'No response from server. Please check your internet connection and server status.');
       } else {
+        console.error('Request setup error:', error.message);
         Alert.alert('Error', 'Failed to load shipments. Please check your internet connection.');
       }
     } finally {
       setLoading(false);
     }
-  };
-
-  const selectImage = (setImage) => {
-    launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, (response) => {
-      if (response.didCancel) return;
-      if (response.errorCode) {
-        console.error('Image Picker Error:', response.errorMessage);
-        return;
-      }
-      const selected = response.assets?.[0];
-      if (selected) {
-        setImage(selected.uri);
-      }
-    });
   };
 
   const handleAddOrUpdateMaterial = async () => {
@@ -186,12 +214,11 @@ const CustomerScreen = ({ route }) => {
     console.log('materialName:', materialName);
     console.log('materialDetails:', materialDetails);
     console.log('quantity:', quantity);
-    console.log('pricePerUnit:', pricePerUnit);
     console.log('=================');
 
-    // Updated validation to match backend required fields
-    if (!materialName || !materialDetails || !quantity || !pricePerUnit) {
-      Alert.alert('Validation Error', 'Please fill all required fields: Material Name, Details, Quantity, and Price per Unit.');
+    // Updated validation - removed price per unit validation
+    if (!materialName || !materialDetails || !quantity) {
+      Alert.alert('Validation Error', 'Please fill all required fields: Material Name, Details, and Quantity.');
       return;
     }
 
@@ -228,54 +255,15 @@ const CustomerScreen = ({ route }) => {
       setLoading(true);
       const formData = new FormData();
 
-      // Add form fields matching backend expectations
+      // Add form fields matching backend expectations - removed price_per_unit
       formData.append('material_Name', materialName);
       formData.append('detail', materialDetails);
       formData.append('quantity', quantity);
-      formData.append('price_per_unit', pricePerUnit);
-      formData.append('pickup_location', pickupLocation || '');
       formData.append('drop_location', dropLocation || '');
       formData.append('c_id', user_id); // Use user_id instead of customerId
       formData.append('status', status);
 
       console.log('Sending c_id:', user_id);
-
-      // Add images with correct field names
-      if (image1) {
-        const uriParts = image1.split('/');
-        const fileName = uriParts[uriParts.length - 1];
-        const fileType = fileName.split('.').pop();
-
-        formData.append('image1', {
-          uri: image1,
-          name: fileName,
-          type: `image/${fileType === 'jpg' ? 'jpeg' : fileType}`,
-        });
-      }
-
-      if (image2) {
-        const uriParts = image2.split('/');
-        const fileName = uriParts[uriParts.length - 1];
-        const fileType = fileName.split('.').pop();
-
-        formData.append('image2', {
-          uri: image2,
-          name: fileName,
-          type: `image/${fileType === 'jpg' ? 'jpeg' : fileType}`,
-        });
-      }
-
-      if (image3) {
-        const uriParts = image3.split('/');
-        const fileName = uriParts[uriParts.length - 1];
-        const fileType = fileName.split('.').pop();
-
-        formData.append('image3', {
-          uri: image3,
-          name: fileName,
-          type: `image/${fileType === 'jpg' ? 'jpeg' : fileType}`,
-        });
-      }
 
       let response;
       if (editingId) {
@@ -317,14 +305,8 @@ const CustomerScreen = ({ route }) => {
     setMaterialName('');
     setMaterialDetails('');
     setQuantity('');
-    setPricePerUnit('');
-    setTotalPrice('');
-    setImage1(null);
-    setImage2(null);
-    setImage3(null);
-    setPickupLocation('');
     setDropLocation('');
-    setStatus('pending');
+    setStatus('Pending');
     setEditIndex(null);
     setEditingId(null);
   };
@@ -360,20 +342,43 @@ const CustomerScreen = ({ route }) => {
     setMaterialName(shipment.material_Name || '');
     setMaterialDetails(shipment.detail || '');
     setQuantity(shipment.quantity?.toString() || '');
-    setPricePerUnit(shipment.price_per_unit?.toString() || '');
-    setTotalPrice(shipment.total_price?.toString() || '');
-    setPickupLocation(shipment.pickup_location || '');
     setDropLocation(shipment.drop_location || '');
-    setStatus(shipment.status || 'pending');
-    
-    // Note: Images from backend might be file paths, handle accordingly
-    setImage1(shipment.image1 ? `${API_BASE_URL}/${shipment.image1}` : null);
-    setImage2(shipment.image2 ? `${API_BASE_URL}/${shipment.image2}` : null);
-    setImage3(shipment.image3 ? `${API_BASE_URL}/${shipment.image3}` : null);
+    setStatus(shipment.status || 'Pending');
     
     setEditIndex(index);
     setEditingId(shipment.id);
     setTab('Material');
+  };
+
+  // Add a debug function to test different API endpoints
+  const testAPIEndpoints = async () => {
+    if (!user_id) {
+      Alert.alert('Error', 'No user ID available for testing');
+      return;
+    }
+
+    const endpoints = [
+      `${API_BASE_URL}/shipment/user?user_id=${user_id}`,
+      `${API_BASE_URL}/shipments/customer/${user_id}`,
+      `${API_BASE_URL}/shipments`,
+      `${API_BASE_URL}/shipment/user?c_id=${user_id}`,
+      `${API_BASE_URL}/api/shipments/user/${user_id}`,
+      `${API_BASE_URL}/getAllShipments`,
+    ];
+
+    let results = [];
+    
+    for (let endpoint of endpoints) {
+      try {
+        console.log(`Testing endpoint: ${endpoint}`);
+        const response = await axios.get(endpoint);
+        results.push(`✅ ${endpoint}: ${response.status} - ${Array.isArray(response.data) ? response.data.length : 'Non-array'} items`);
+      } catch (error) {
+        results.push(`❌ ${endpoint}: ${error.response?.status || 'No response'} - ${error.message}`);
+      }
+    }
+
+    Alert.alert('API Test Results', results.join('\n\n'));
   };
 
   // Add a debug button to check AsyncStorage (remove in production)
@@ -396,34 +401,6 @@ const CustomerScreen = ({ route }) => {
     }
   };
 
-  const ImageUploadCard = ({ title, image, onPress, required = false }) => (
-    <View style={styles.imageUploadContainer}>
-      <Text style={styles.imageUploadTitle}>
-        {title} {required && <Text style={styles.required}>*</Text>}
-      </Text>
-      <TouchableOpacity 
-        style={styles.imageUploadButton} 
-        onPress={onPress}
-        activeOpacity={0.8}
-      >
-        {image ? (
-          <View style={styles.imagePreviewContainer}>
-            <Image source={{ uri: image }} style={styles.imagePreview} />
-            <View style={styles.imageOverlay}>
-              <Text style={styles.imageOverlayText}>Tap to change</Text>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.imagePlaceholder}>
-            <Text style={styles.imagePlaceholderIcon}>📷</Text>
-            <Text style={styles.imagePlaceholderText}>Upload Image</Text>
-            <Text style={styles.imagePlaceholderSubtext}>Tap to select</Text>
-          </View>
-        )}
-      </TouchableOpacity>
-    </View>
-  );
-
   const renderMaterialForm = () => (
     <Animated.View style={{ opacity: fadeAnim, flex: 1 }}>
       <ScrollView 
@@ -436,11 +413,18 @@ const CustomerScreen = ({ route }) => {
             <Text style={{ fontSize: 12, color: '#92400E' }}>
               Debug: user_id = "{user_id}" | customerId = "{customerId}"
             </Text>
-            <TouchableOpacity onPress={debugAsyncStorage} style={{ marginTop: 5 }}>
-              <Text style={{ fontSize: 12, color: '#3B82F6', textDecorationLine: 'underline' }}>
-                Debug AsyncStorage
-              </Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', marginTop: 5, gap: 10 }}>
+              <TouchableOpacity onPress={debugAsyncStorage}>
+                <Text style={{ fontSize: 12, color: '#3B82F6', textDecorationLine: 'underline' }}>
+                  Debug AsyncStorage
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={testAPIEndpoints}>
+                <Text style={{ fontSize: 12, color: '#DC2626', textDecorationLine: 'underline' }}>
+                  Test API Endpoints
+                </Text>
+              </TouchableOpacity>
+            </View>
           </Card.Content>
         </Card>
 
@@ -485,78 +469,20 @@ const CustomerScreen = ({ route }) => {
               />
             </View>
 
-            <View style={styles.rowInputs}>
-              <View style={styles.halfInput}>
-                <TextInput
-                  label="Quantity *"
-                  mode="outlined"
-                  style={styles.modernInput}
-                  outlineColor="#FDBA74"
-                  activeOutlineColor="#FB923C"
-                  keyboardType="numeric"
-                  left={<TextInput.Icon icon="counter" color="#FB923C" />}
-                  value={quantity}
-                  onChangeText={setQuantity}
-                  theme={{ colors: { primary: '#FB923C' } }}
-                  disabled={loading}
-                />
-              </View>
-              <View style={styles.halfInput}>
-                <TextInput
-                  label="Price per Unit *"
-                  mode="outlined"
-                  style={styles.modernInput}
-                  outlineColor="#FDBA74"
-                  activeOutlineColor="#FB923C"
-                  keyboardType="numeric"
-                  left={<TextInput.Icon icon="currency-inr" color="#FB923C" />}
-                  value={pricePerUnit}
-                  onChangeText={setPricePerUnit}
-                  theme={{ colors: { primary: '#FB923C' } }}
-                  disabled={loading}
-                />
-              </View>
-            </View>
-
             <View style={styles.inputGroup}>
-              <View style={styles.totalPriceContainer}>
-                <View style={styles.totalPriceCard}>
-                  <Text style={styles.totalPriceLabel}>Total Price</Text>
-                  <Text style={styles.totalPriceValue}>₹{totalPrice || '0.00'}</Text>
-                </View>
-              </View>
-            </View>
-          </Card.Content>
-        </Card>
-
-        {/* Image Upload Section */}
-        <Card style={styles.modernCard}>
-          <View style={styles.cardHeader}>
-            <Title style={styles.cardTitle}>📸 Upload Images</Title>
-          </View>
-
-          <Card.Content style={styles.cardContent}>
-            <ImageUploadCard
-              title="Primary Image"
-              image={image1}
-              onPress={() => !loading && selectImage(setImage1)}
-            />
-            
-            <View style={styles.imageRow}>
-              <View style={styles.imageCol}>
-                <ImageUploadCard
-                  title="Additional 1"
-                  image={image2}
-                  onPress={() => !loading && selectImage(setImage2)}
-                />
-              </View>
-              <View style={styles.imageCol}>
-                <ImageUploadCard
-                  title="Additional 2"
-                  image={image3}
-                  onPress={() => !loading && selectImage(setImage3)}
-                />
-              </View>
+              <TextInput
+                label="Quantity *"
+                mode="outlined"
+                style={styles.modernInput}
+                outlineColor="#FDBA74"
+                activeOutlineColor="#FB923C"
+                keyboardType="numeric"
+                left={<TextInput.Icon icon="counter" color="#FB923C" />}
+                value={quantity}
+                onChangeText={setQuantity}
+                theme={{ colors: { primary: '#FB923C' } }}
+                disabled={loading}
+              />
             </View>
           </Card.Content>
         </Card>
@@ -568,21 +494,6 @@ const CustomerScreen = ({ route }) => {
           </View>
 
           <Card.Content style={styles.cardContent}>
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Pickup Location"
-                mode="outlined"
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                left={<TextInput.Icon icon="map-marker-up" color="#FB923C" />}
-                value={pickupLocation}
-                onChangeText={setPickupLocation}
-                theme={{ colors: { primary: '#FB923C' } }}
-                disabled={loading}
-              />
-            </View>
-
             <View style={styles.inputGroup}>
               <TextInput
                 label="Drop Location"
@@ -672,7 +583,8 @@ const CustomerScreen = ({ route }) => {
               <Text style={styles.emptyStateIcon}>📦</Text>
               <Text style={styles.emptyStateTitle}>No shipments found</Text>
               <Text style={styles.emptyStateSubtitle}>
-                Add your first shipment to get started
+                Add your first shipment to get started{'\n'}
+                {user_id ? `User ID: ${user_id}` : 'No user ID available'}
               </Text>
             </View>
           ) : (
@@ -702,37 +614,21 @@ const CustomerScreen = ({ route }) => {
                     
                     <View style={styles.materialDetails}>
                       <Text style={styles.materialDetailText}>
-                        Qty: {material.quantity} @ ₹{material.price_per_unit} each
-                      </Text>
-                      <Text style={styles.materialTotalPrice}>
-                        Total: ₹{material.total_price}
+                        Quantity: {material.quantity}
                       </Text>
                       <Text style={styles.materialDetailText}>
-                        Status: {material.status || 'pending'}
+                        Status: {material.status || 'Pending'}
+                      </Text>
+                      <Text style={styles.materialDetailText}>
+                        Details: {material.detail}
                       </Text>
                     </View>
 
-                    {(material.pickup_location || material.drop_location) && (
+                    {material.drop_location && (
                       <View style={styles.materialLocations}>
-                        {material.pickup_location && (
-                          <Text style={styles.locationText}>
-                            📍 Pickup: {material.pickup_location}
-                          </Text>
-                        )}
-                        {material.drop_location && (
-                          <Text style={styles.locationText}>
-                            📍 Drop: {material.drop_location}
-                          </Text>
-                        )}
-                      </View>
-                    )}
-
-                    {material.image1 && (
-                      <View style={styles.materialImageContainer}>
-                        <Image 
-                          source={{ uri: `${API_BASE_URL}/${material.image1}` }} 
-                          style={styles.materialImage}
-                        />
+                        <Text style={styles.locationText}>
+                          📍 Drop Location: {material.drop_location}
+                        </Text>
                       </View>
                     )}
                   </Card.Content>
@@ -926,114 +822,6 @@ const styles = StyleSheet.create({
   },
   readOnlyInput: {
     backgroundColor: '#FEF3E2',
-  },
-  rowInputs: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 20,
-  },
-  halfInput: {
-    flex: 1,
-  },
-  totalPriceContainer: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    shadowColor: '#EA580C',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    marginTop: 4,
-  },
-  totalPriceCard: {
-    backgroundColor: '#EA580C',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    borderRadius: 12,
-  },
-  totalPriceLabel: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '600',
-    opacity: 0.9,
-    marginBottom: 4,
-  },
-  totalPriceValue: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  imageUploadContainer: {
-    marginBottom: 20,
-  },
-  imageUploadTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#C2410C',
-    marginBottom: 8,
-  },
-  required: {
-    color: '#DC2626',
-    fontWeight: '600',
-  },
-  imageUploadButton: {
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  imagePreview: {
-    width: '100%',
-    height: 180,
-    borderRadius: 12,
-  },
-  imagePreviewContainer: {
-    position: 'relative',
-  },
-  imageOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingVertical: 8,
-    alignItems: 'center',
-  },
-  imageOverlayText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  imagePlaceholder: {
-    height: 120,
-    backgroundColor: '#FEF3E2',
-    borderWidth: 2,
-    borderColor: '#FDBA74',
-    borderStyle: 'dashed',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  imagePlaceholderIcon: {
-    fontSize: 32,
-    marginBottom: 8,
-  },
-  imagePlaceholderText: {
-    fontSize: 14,
-    color: '#A16207',
-    fontWeight: '500',
-  },
-  imagePlaceholderSubtext: {
-    fontSize: 12,
-    color: '#A16207',
-    opacity: 0.7,
-    marginTop: 4,
-  },
-  imageRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  imageCol: {
-    flex: 1,
   },
   modernButton: {
     backgroundColor: '#EA580C',

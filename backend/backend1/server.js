@@ -175,7 +175,7 @@ app.get('/shipment', (req, res) => {
       status = null
     } = req.body;
   
-    if (!material_Name || !detail || !quantity || !price_per_unit || !destination) {
+    if (!material_Name || !detail || !quantity ) {
       return res.status(400).json({ error: 'Required fields are missing' });
     }
   
@@ -240,7 +240,7 @@ app.get('/shipment', (req, res) => {
       status = null
     } = req.body;
   
-    if (!material_Name || !detail || !quantity || !price_per_unit || !destination) {
+    if (!material_Name || !detail || !quantity ) {
       return res.status(400).json({ error: 'Required fields are missing' });
     }
   
@@ -340,7 +340,7 @@ app.get('/employee_id', (req, res) => {
   });
 
 
-  app.get('/user', (req, res) => {
+  app.get('/shipment/user', (req, res) => {
     const userId = req.query.user_id;
   
     if (!userId) {
@@ -357,6 +357,104 @@ app.get('/employee_id', (req, res) => {
       res.json(results);
     });
   });
+
+  app.get('/counts', (req, res) => {
+
+    let usersCount = 0;
+    let materialsCount = 0;
+  
+  
+    db.query('SELECT COUNT(*) AS count FROM user', (err, userResult) => {
+      if (err) {
+        return res.status(500).json({ error: 'Failed to fetch users count' });
+      }
+      usersCount = userResult[0].count;
+  
+      db.query('SELECT COUNT(*) AS count FROM shipment_detail', (err, materialResult) => {
+        if (err) {
+          return res.status(500).json({ error: 'Failed to fetch materials count' });
+        }
+        materialsCount = materialResult[0].count;
+  
+        res.json({
+          usersCount,
+          materialsCount,
+          reportsCount: 311, 
+          projectsCount: 856, 
+        });
+      });
+    });
+  });
+
+
+  app.put('/update_status', (req, res) => {
+    const { id, status } = req.body;
+    
+    if (!id || !status) {
+      return res.status(400).json({ error: 'Shipment ID and status are required' });
+    }
+  
+    // Updated valid statuses to match your React component
+    const validStatuses = ['Requested', 'Confirmed', 'Picked', 'Out for Delivery','Waiting to Confirm', 'Delivered'];
+    
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ 
+        error: `Invalid status value. Valid statuses are: ${validStatuses.join(', ')}` 
+      });
+    }
+  
+    const sql = 'UPDATE shipment_detail SET status = ? WHERE id = ?';
+    db.query(sql, [status, id], (err, result) => {
+      if (err) {
+        console.error('Database error:', err);
+        return res.status(500).json({ error: 'Failed to update status' });
+      }
+      
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Shipment not found' });
+      }
+      
+      console.log(`Status updated for shipment ID ${id} to ${status}`);
+      res.json({ message: 'Status updated successfully' });
+    });
+  });
+
+
+  app.post('/images_update', upload.fields([
+    { name: 'image1', maxCount: 1 },
+    { name: 'image2', maxCount: 1 },
+    { name: 'image3', maxCount: 1 }
+  ]), (req, res) => {
+    console.log('Images update request received');
+    console.log('Body:', req.body);
+    console.log('Files:', req.files);
+    
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'Shipment ID is required' });
+
+    const updates = [];
+    const values = [];
+
+    const image1 = req.files?.image1?.[0]?.path;
+    const image2 = req.files?.image2?.[0]?.path;
+    const image3 = req.files?.image3?.[0]?.path;
+
+    if (image1) { updates.push('image1 = ?'); values.push(image1); }
+    if (image2) { updates.push('image2 = ?'); values.push(image2); }
+    if (image3) { updates.push('image3 = ?'); values.push(image3); }
+
+    if (updates.length === 0) return res.status(400).json({ error: 'No images provided' });
+
+    const sql = `UPDATE shipment_detail SET ${updates.join(', ')} WHERE id = ?`;
+    values.push(id);
+
+    db.query(sql, values, (err, result) => {
+      if (err) return res.status(500).json({ error: 'Failed to update images' });
+      if (result.affectedRows === 0) return res.status(404).json({ message: 'Shipment not found' });
+      res.json({ message: 'Images updated successfully' });
+    });
+  });
+
 app.listen(PORT, () => {
     console.log(`Server is running at http://localhost:${PORT}`);
 });

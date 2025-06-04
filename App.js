@@ -12,14 +12,9 @@ import DealerScreen from './screens/DealerScreen';
 import AdminScreen from './screens/AdminScreen';
 import Users from './screens/Admin/Users';
 import Material from './screens/Admin/Material';
+import History from './screens/Admin/History';
+import EmployeeScreen from './screens/EmployeeScreen';
 
-
-// Placeholder Employee Screen
-const EmployeeScreen = () => (
-  <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-    <Text style={{ fontSize: 20 }}>Hello from Employee</Text>
-  </SafeAreaView>
-);
 
 const Stack = createStackNavigator();
 
@@ -37,6 +32,7 @@ export default function App() {
           <Stack.Screen name="AdminScreen" component={AdminScreen} />
           <Stack.Screen name="Users" component={Users} />
           <Stack.Screen name="Material" component={Material} />
+          <Stack.Screen name="History" component={History} />
         </Stack.Navigator>
       </NavigationContainer>
     </PaperProvider>

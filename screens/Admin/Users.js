@@ -1,64 +1,124 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
   FlatList,
-  StyleSheet,
   Alert,
   SafeAreaView,
   Animated,
   ScrollView,
   Dimensions,
   StatusBar,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
 } from 'react-native';
-import { Menu, Divider, Button } from 'react-native-paper';
+import { Menu, Divider } from 'react-native-paper';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import axios from 'axios';
 
 const { width } = Dimensions.get('window');
 
-// Separate UserCard component to properly use hooks
-const UserCard = ({ item, index, onEdit, onDelete }) => {
-  const [cardFadeAnim] = useState(new Animated.Value(0));
-  const [cardSlideAnim] = useState(new Animated.Value(50));
+// Completely isolated InputField component
+const InputField = React.memo(({
+  icon,
+  placeholder,
+  value,
+  onChangeText,
+  keyboardType,
+  secureTextEntry,
+  editable = true
+}) => {
+  return (
+    <View style={[styles.inputContainer, !editable && styles.disabledInput]}>
+      <View style={styles.iconContainer}>
+        <Ionicons name={icon} size={18} color="#64748b" />
+      </View>
+      <TextInput
+        style={styles.input}
+        placeholder={placeholder}
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType={keyboardType || 'default'}
+        secureTextEntry={secureTextEntry}
+        editable={editable}
+        placeholderTextColor="#94a3b8"
+        autoCorrect={false}
+        autoCapitalize={keyboardType === 'email-address' ? 'none' : 'words'}
+      />
+    </View>
+  );
+});
+
+// Completely memoized UserCard component with better optimization
+const UserCard = React.memo(({ item, index, onEdit, onDelete }) => {
+  const cardFadeAnim = useRef(new Animated.Value(0)).current;
+  const cardSlideAnim = useRef(new Animated.Value(30)).current;
 
   useEffect(() => {
-    Animated.sequence([
-      Animated.delay(index * 100),
+    const timer = setTimeout(() => {
       Animated.parallel([
         Animated.timing(cardFadeAnim, {
           toValue: 1,
-          duration: 500,
+          duration: 600,
           useNativeDriver: true,
         }),
         Animated.timing(cardSlideAnim, {
           toValue: 0,
-          duration: 400,
+          duration: 500,
           useNativeDriver: true,
         }),
-      ]),
-    ]).start();
-  }, [cardFadeAnim, cardSlideAnim, index]);
+      ]).start();
+    }, index * 80);
 
-  const getRoleColor = (roleType) => {
-    switch (roleType?.toLowerCase()) {
-      case 'client': return '#10b981';
-      case 'dealer': return '#3b82f6';
-      case 'employee': return '#f59e0b';
-      default: return '#6b7280';
-    }
-  };
+    return () => clearTimeout(timer);
+  }, [index, cardFadeAnim, cardSlideAnim]);
 
-  const getRoleIcon = (roleType) => {
-    switch (roleType?.toLowerCase()) {
-      case 'client': return 'person-outline';
-      case 'dealer': return 'business-outline';
-      case 'employee': return 'people-outline';
-      default: return 'help-outline';
-    }
-  };
+  const roleConfig = useMemo(() => {
+    const getRoleColor = (roleType) => {
+      switch (roleType?.toLowerCase()) {
+        case 'client': return '#06d6a0';
+        case 'dealer': return '#118ab2';
+        case 'employee': return '#ffd60a';
+        default: return '#8b5cf6';
+      }
+    };
+
+    const getRoleIcon = (roleType) => {
+      switch (roleType?.toLowerCase()) {
+        case 'client': return 'person-outline';
+        case 'dealer': return 'business-outline';
+        case 'employee': return 'people-outline';
+        default: return 'help-outline';
+      }
+    };
+
+    return {
+      color: getRoleColor(item.type),
+      icon: getRoleIcon(item.type)
+    };
+  }, [item.type]);
+
+  const avatarText = useMemo(() => {
+    return item.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  }, [item.name]);
+
+  const handleEdit = useCallback(() => {
+    onEdit(item);
+  }, [item, onEdit]);
+
+  const handleDelete = useCallback(() => {
+    Alert.alert(
+      'Delete User',
+      `Remove ${item.name} from your team?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => onDelete(item.email) },
+      ]
+    );
+  }, [item.name, item.email, onDelete]);
 
   return (
     <Animated.View
@@ -70,81 +130,308 @@ const UserCard = ({ item, index, onEdit, onDelete }) => {
         },
       ]}
     >
-      <View style={styles.userHeader}>
-        <View style={styles.userInfo}>
-          <View style={styles.nameRow}>
-            <Text style={styles.userName}>{item.name}</Text>
-            <View style={[styles.roleBadge, { backgroundColor: getRoleColor(item.type) }]}>
-              <Ionicons name={getRoleIcon(item.type)} size={12} color="#fff" />
+      <View style={styles.cardHeader}>
+        <View style={styles.avatarContainer}>
+          <Text style={styles.avatarText}>{avatarText}</Text>
+        </View>
+
+        <View style={styles.userDetails}>
+          <View style={styles.nameSection}>
+            <Text style={styles.userName} numberOfLines={1}>{item.name}</Text>
+            <View style={[styles.roleBadge, { backgroundColor: roleConfig.color }]}>
+              <Ionicons name={roleConfig.icon} size={10} color="#fff" />
               <Text style={styles.roleBadgeText}>{item.type}</Text>
             </View>
           </View>
-          <View style={styles.contactInfo}>
-            <View style={styles.infoRow}>
-              <Ionicons name="mail-outline" size={16} color="#6b7280" />
-              <Text style={styles.userEmail}>{item.email}</Text>
+
+          <View style={styles.contactSection}>
+            <View style={styles.contactRow}>
+              <Ionicons name="mail" size={14} color="#64748b" />
+              <Text style={styles.contactText} numberOfLines={1}>{item.email}</Text>
             </View>
-            <View style={styles.infoRow}>
-              <Ionicons name="call-outline" size={16} color="#6b7280" />
-              <Text style={styles.userPhone}>{item.phone}</Text>
+            <View style={styles.contactRow}>
+              <Ionicons name="call" size={14} color="#64748b" />
+              <Text style={styles.contactText}>{item.phone}</Text>
             </View>
           </View>
         </View>
       </View>
 
-      <View style={styles.actionContainer}>
+      <View style={styles.actionRow}>
         <TouchableOpacity
-          style={[styles.actionButton, styles.editButton]}
-          onPress={() => onEdit(item)}
-          activeOpacity={0.8}
+          style={[styles.actionBtn, styles.editBtn]}
+          onPress={handleEdit}
+          activeOpacity={0.7}
         >
-          <Ionicons name="create-outline" size={16} color="#fff" />
-          <Text style={styles.actionButtonText}>Edit</Text>
+          <Ionicons name="create" size={16} color="#fff" />
+          <Text style={styles.actionBtnText}>Edit</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.actionButton, styles.deleteButton]}
-          onPress={() =>
-            Alert.alert(
-              'Confirm Delete',
-              `Are you sure you want to delete user ${item.name}?`,
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Delete', style: 'destructive', onPress: () => onDelete(item.email) },
-              ]
-            )
-          }
-          activeOpacity={0.8}
+          style={[styles.actionBtn, styles.deleteBtn]}
+          onPress={handleDelete}
+          activeOpacity={0.7}
         >
-          <Ionicons name="trash-outline" size={16} color="#fff" />
-          <Text style={styles.actionButtonText}>Delete</Text>
+          <Ionicons name="trash" size={16} color="#fff" />
+          <Text style={styles.actionBtnText}>Delete</Text>
         </TouchableOpacity>
       </View>
     </Animated.View>
   );
-};
+}, (prevProps, nextProps) => {
+  // Custom comparison function to prevent unnecessary re-renders
+  return prevProps.item.email === nextProps.item.email &&
+         prevProps.item.name === nextProps.item.name &&
+         prevProps.item.phone === nextProps.item.phone &&
+         prevProps.item.type === nextProps.item.type &&
+         prevProps.index === nextProps.index;
+});
 
-const Users = () => {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [phone, setPhone] = useState('');
-  const [role, setRole] = useState('Select Role');
+// Form component to isolate form state
+const UserForm = React.memo(({
+  isVisible,
+  isEditing,
+  onSubmit,
+  onCancel,
+  loading,
+  initialData
+}) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    phone: '',
+    role: 'Select Role'
+  });
   const [menuVisible, setMenuVisible] = useState(false);
-  const [users, setUsers] = useState([]);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editingEmail, setEditingEmail] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [showForm, setShowForm] = useState(false);
 
-  // Animation values
-  const [fadeAnim] = useState(new Animated.Value(0));
-  const [slideAnim] = useState(new Animated.Value(50));
-  const [formSlideAnim] = useState(new Animated.Value(-300));
-  const [buttonScaleAnim] = useState(new Animated.Value(1));
+  const formSlideAnim = useRef(new Animated.Value(-50)).current;
+
+  // Update form when initial data changes
+  useEffect(() => {
+    if (initialData) {
+      setFormData({
+        name: initialData.name || '',
+        email: initialData.email || '',
+        password: '',
+        phone: initialData.phone || '',
+        role: initialData.type || 'Select Role'
+      });
+    } else {
+      setFormData({
+        name: '',
+        email: '',
+        password: '',
+        phone: '',
+        role: 'Select Role'
+      });
+    }
+  }, [initialData]);
 
   useEffect(() => {
-    // Initial animation
+    Animated.spring(formSlideAnim, {
+      toValue: isVisible ? 0 : -50,
+      useNativeDriver: true,
+      tension: 100,
+      friction: 8,
+    }).start();
+  }, [isVisible, formSlideAnim]);
+
+  const updateField = useCallback((field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  }, []);
+
+  const handleSubmit = useCallback(() => {
+    if (!formData.name.trim()) {
+      Alert.alert('Missing Information', 'Please enter a name.');
+      return;
+    }
+    if (!formData.email.trim()) {
+      Alert.alert('Missing Information', 'Please enter an email address.');
+      return;
+    }
+    if (!formData.password.trim()) {
+      Alert.alert('Missing Information', 'Please enter a password.');
+      return;
+    }
+    if (!formData.phone.trim()) {
+      Alert.alert('Missing Information', 'Please enter a phone number.');
+      return;
+    }
+    if (formData.role === 'Select Role') {
+      Alert.alert('Missing Information', 'Please select a role.');
+      return;
+    }
+
+    onSubmit(formData);
+  }, [formData, onSubmit]);
+
+  const selectRole = useCallback((selectedRole) => {
+    updateField('role', selectedRole);
+    setMenuVisible(false);
+  }, [updateField]);
+
+  const handleCancel = useCallback(() => {
+    setFormData({
+      name: '',
+      email: '',
+      password: '',
+      phone: '',
+      role: 'Select Role'
+    });
+    onCancel();
+  }, [onCancel]);
+
+  if (!isVisible) return null;
+
+  return (
+    <Animated.View
+      style={[
+        styles.formContainer,
+        {
+          transform: [{ translateY: formSlideAnim }],
+        },
+      ]}
+    >
+      <View style={styles.formHeader}>
+        <Text style={styles.formTitle}>
+          {isEditing ? "Update Member" : "Add New Member"}
+        </Text>
+        <Text style={styles.formSubtitle}>
+          {isEditing ? "Modify member information" : "Fill in the details below"}
+        </Text>
+      </View>
+
+      <View style={styles.formFields}>
+        <InputField
+          icon="person"
+          placeholder="Full name"
+          value={formData.name}
+          onChangeText={(text) => updateField('name', text)}
+        />
+
+        <InputField
+          icon="mail"
+          placeholder="Email address"
+          value={formData.email}
+          onChangeText={(text) => updateField('email', text)}
+          keyboardType="email-address"
+          editable={!isEditing}
+        />
+
+        <InputField
+          icon="lock-closed"
+          placeholder={isEditing ? "New password" : "Password"}
+          value={formData.password}
+          onChangeText={(text) => updateField('password', text)}
+          secureTextEntry
+        />
+
+        <InputField
+          icon="call"
+          placeholder="Phone number"
+          value={formData.phone}
+          onChangeText={(text) => updateField('phone', text)}
+          keyboardType="phone-pad"
+        />
+
+        <View style={styles.roleContainer}>
+          <View style={styles.iconContainer}>
+            <Ionicons name="briefcase" size={18} color="#64748b" />
+          </View>
+          <Menu
+            visible={menuVisible}
+            onDismiss={() => setMenuVisible(false)}
+            anchor={
+              <TouchableOpacity
+                style={styles.roleSelector}
+                onPress={() => setMenuVisible(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={[
+                  styles.roleSelectorText,
+                  formData.role === 'Select Role' && styles.placeholder
+                ]}>
+                  {formData.role}
+                </Text>
+                <Ionicons name="chevron-down" size={16} color="#64748b" />
+              </TouchableOpacity>
+            }
+          >
+            <Menu.Item onPress={() => selectRole('Client')} title="Client" />
+            <Divider />
+            <Menu.Item onPress={() => selectRole('Dealer')} title="Dealer" />
+            <Divider />
+            <Menu.Item onPress={() => selectRole('Employee')} title="Employee" />
+          </Menu>
+        </View>
+
+        <View style={styles.formActions}>
+          {isEditing ? (
+            <>
+              <TouchableOpacity
+                style={[styles.primaryBtn, { flex: 1, marginRight: 8 }]}
+                onPress={handleSubmit}
+                disabled={loading}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="checkmark" size={18} color="#fff" />
+                <Text style={styles.primaryBtnText}>
+                  {loading ? "Updating..." : "Update"}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.secondaryBtn, { flex: 1, marginLeft: 8 }]}
+                onPress={handleCancel}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="close" size={18} color="#64748b" />
+                <Text style={styles.secondaryBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={handleSubmit}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="person-add" size={18} color="#fff" />
+              <Text style={styles.primaryBtnText}>
+                {loading ? "Adding..." : "Add Member"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    </Animated.View>
+  );
+});
+
+const Users = () => {
+  const [users, setUsers] = useState([]);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [menuVisible, setMenuVisible] = useState(false);
+
+  // Use refs for animations to prevent re-creation
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(-20)).current;
+
+  const filteredUsers = useMemo(() => {
+    return users.filter((user) => {
+      const matchesSearch = user.name.toLowerCase().includes(searchInput.toLowerCase());
+      const matchesRole = roleFilter ? user.type?.toLowerCase() === roleFilter.toLowerCase() : true;
+      return matchesSearch && matchesRole;
+    });
+  }, [users, searchInput, roleFilter]);
+
+  useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -157,20 +444,10 @@ const Users = () => {
         useNativeDriver: true,
       }),
     ]).start();
-
     fetchUsers();
   }, []);
 
-  useEffect(() => {
-    // Form animation
-    Animated.timing(formSlideAnim, {
-      toValue: showForm ? 0 : -300,
-      duration: 400,
-      useNativeDriver: true,
-    }).start();
-  }, [showForm]);
-
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
       const response = await axios.get('http://192.168.1.7:3000/');
@@ -181,304 +458,220 @@ const Users = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const animateButton = () => {
-    Animated.sequence([
-      Animated.timing(buttonScaleAnim, {
-        toValue: 0.95,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.timing(buttonScaleAnim, {
-        toValue: 1,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
-
-  const openMenu = () => setMenuVisible(true);
-  const closeMenu = () => setMenuVisible(false);
-
-  const clearForm = () => {
-    setName('');
-    setEmail('');
-    setPassword('');
-    setPhone('');
-    setRole('Select Role');
-    setIsEditing(false);
-    setEditingEmail(null);
-    setShowForm(false);
-  };
-
-  const handleAddUser = async () => {
-    if (!name || !email || !password || !phone || role === 'Select Role') {
-      Alert.alert('Validation Error', 'All fields and role selection are required!');
-      return;
-    }
-
-    animateButton();
+  const handleFormSubmit = useCallback(async (formData) => {
     setLoading(true);
-    const newUser = { name, email, password, phone, type: role };
-
     try {
-      await axios.post('http://192.168.1.7:3000/signup', newUser);
-      fetchUsers();
-      clearForm();
-      Alert.alert('Success', 'User added successfully!');
+      const userData = {
+        name: formData.name.trim(),
+        email: formData.email.trim().toLowerCase(),
+        password: formData.password.trim(),
+        phone: formData.phone.trim(),
+        type: formData.role
+      };
+      if (isEditing) {
+        await axios.put(`http://192.168.1.7:3000/update-user/${editingUser.email}`, {
+          name: userData.name,
+          password: userData.password,
+          phone: userData.phone,
+          type: userData.type
+        });
+        Alert.alert('Success', 'User updated successfully!');
+      } else {
+        await axios.post('http://192.168.1.7:3000/signup', userData);
+        Alert.alert('Success', 'User added successfully!');
+      }
+      await fetchUsers();
+      handleFormCancel();
     } catch (error) {
-      console.error('Add User Error:', error);
-      Alert.alert('Error', 'Failed to add user. Try again.');
+      console.error(isEditing ? 'Update User Error:' : 'Add User Error:', error);
+      Alert.alert('Error', `Failed to ${isEditing ? 'update' : 'add'} user. Please try again.`);
     } finally {
       setLoading(false);
     }
-  };
+  }, [isEditing, editingUser, fetchUsers]);
 
-  const handleDeleteUser = async (emailToDelete) => {
+  const handleFormCancel = useCallback(() => {
+    setShowForm(false);
+    setIsEditing(false);
+    setEditingUser(null);
+  }, []);
+
+  const handleDeleteUser = useCallback(async (emailToDelete) => {
     setLoading(true);
     try {
       await axios.delete(`http://192.168.1.7:3000/delete-user/${emailToDelete}`);
-      setUsers(users.filter((user) => user.email !== emailToDelete));
+      setUsers(prevUsers => prevUsers.filter(user => user.email !== emailToDelete));
       Alert.alert('Success', 'User deleted successfully!');
     } catch (error) {
       console.error('Delete User Error:', error);
-      Alert.alert('Error', 'Failed to delete user. Try again.');
+      Alert.alert('Error', 'Failed to delete user. Please try again.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleEditUser = (user) => {
-    setName(user.name);
-    setEmail(user.email);
-    setPhone(user.phone);
-    setRole(user.type);
-    setPassword('');
+  const handleEditUser = useCallback((user) => {
+    setEditingUser(user);
     setIsEditing(true);
-    setEditingEmail(user.email);
     setShowForm(true);
-  };
+  }, []);
 
-  const handleUpdateUser = async () => {
-    if (!name || !password || !phone || role === 'Select Role') {
-      Alert.alert('Validation Error', 'All fields except email are required for update!');
-      return;
+  const toggleForm = useCallback(() => {
+    if (showForm) {
+      handleFormCancel();
+    } else {
+      setShowForm(true);
     }
+  }, [showForm, handleFormCancel]);
 
-    animateButton();
-    setLoading(true);
-    const updatedUser = { name, password, phone, type: role };
+  const handleRoleFilter = useCallback((selectedRole) => {
+    setRoleFilter(selectedRole);
+    setMenuVisible(false);
+  }, []);
 
-    try {
-      await axios.put(`http://192.168.1.7:3000/update-user/${editingEmail}`, updatedUser);
-      Alert.alert('Success', 'User updated successfully!');
-      clearForm();
-      fetchUsers();
-    } catch (error) {
-      console.error('Update User Error:', error);
-      Alert.alert('Error', 'Failed to update user. Try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderUser = ({ item, index }) => (
+  // Stable render functions
+  const renderUser = useCallback(({ item, index }) => (
     <UserCard
+      key={item.email}
       item={item}
       index={index}
       onEdit={handleEditUser}
       onDelete={handleDeleteUser}
     />
-  );
+  ), [handleEditUser, handleDeleteUser]);
 
-  const InputField = ({ icon, placeholder, value, onChangeText, keyboardType, secureTextEntry, editable = true }) => (
-    <View style={[styles.inputContainer, !editable && styles.disabledInput]}>
-      <Ionicons name={icon} size={20} color="#6b7280" style={styles.inputIcon} />
-      <TextInput
-        style={styles.input}
-        placeholder={placeholder}
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType={keyboardType}
-        secureTextEntry={secureTextEntry}
-        editable={editable}
-        placeholderTextColor="#9ca3af"
-      />
-    </View>
-  );
+  const keyExtractor = useCallback((item) => item.email, []);
+
+  const memoizedUsersList = useMemo(() => (
+    <FlatList
+      data={filteredUsers}
+      keyExtractor={keyExtractor}
+      renderItem={renderUser}
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={styles.usersList}
+      scrollEnabled={false}
+      removeClippedSubviews={true}
+      maxToRenderPerBatch={10}
+      windowSize={10}
+      getItemLayout={(data, index) => ({
+        length: 200, // Approximate height of each item
+        offset: 200 * index,
+        index,
+      })}
+    />
+  ), [filteredUsers, keyExtractor, renderUser]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
-      
-      <Animated.View
-        style={[
-          styles.header,
-          {
-            opacity: fadeAnim,
-            transform: [{ translateY: slideAnim }],
-          },
-        ]}
+      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <Text style={styles.heading}>User Management</Text>
-        <Text style={styles.subHeading}>Manage your team members</Text>
-        
-        <TouchableOpacity
-          style={styles.addUserButton}
-          onPress={() => setShowForm(!showForm)}
-          activeOpacity={0.8}
-        >
-          <Ionicons name={showForm ? "close" : "add"} size={20} color="#fff" />
-          <Text style={styles.addUserButtonText}>
-            {showForm ? "Close Form" : "Add New User"}
-          </Text>
-        </TouchableOpacity>
-      </Animated.View>
-
-      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <Animated.View
           style={[
-            styles.formContainer,
-            {
-              transform: [{ translateY: formSlideAnim }],
-            },
-          ]}
-        >
-          {showForm && (
-            <View style={styles.form}>
-              <Text style={styles.formTitle}>
-                {isEditing ? "Update User Information" : "Add New User"}
-              </Text>
-
-              <InputField
-                icon="person-outline"
-                placeholder="Enter full name"
-                value={name}
-                onChangeText={setName}
-              />
-
-              <InputField
-                icon="mail-outline"
-                placeholder="Enter email address"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                editable={!isEditing}
-              />
-
-              <InputField
-                icon="lock-closed-outline"
-                placeholder={isEditing ? "Enter new password" : "Enter password"}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
-
-              <InputField
-                icon="call-outline"
-                placeholder="Enter phone number"
-                value={phone}
-                onChangeText={setPhone}
-                keyboardType="phone-pad"
-              />
-
-              <View style={styles.roleContainer}>
-                <Ionicons name="briefcase-outline" size={20} color="#6b7280" style={styles.inputIcon} />
-                <Menu
-                  visible={menuVisible}
-                  onDismiss={closeMenu}
-                  anchor={
-                    <TouchableOpacity style={styles.roleSelector} onPress={openMenu}>
-                      <Text style={[styles.roleSelectorText, role === 'Select Role' && styles.placeholder]}>
-                        {role}
-                      </Text>
-                      <Ionicons name="chevron-down" size={20} color="#6b7280" />
-                    </TouchableOpacity>
-                  }
-                >
-                  <Menu.Item onPress={() => { setRole('Client'); closeMenu(); }} title="Client" />
-                  <Divider />
-                  <Menu.Item onPress={() => { setRole('Dealer'); closeMenu(); }} title="Dealer" />
-                  <Divider />
-                  <Menu.Item onPress={() => { setRole('Employee'); closeMenu(); }} title="Employee" />
-                </Menu>
-              </View>
-
-              <View style={styles.formActions}>
-                {isEditing ? (
-                  <>
-                    <Animated.View style={{ transform: [{ scale: buttonScaleAnim }] }}>
-                      <TouchableOpacity
-                        style={[styles.primaryButton, { flex: 1, marginRight: 8 }]}
-                        onPress={handleUpdateUser}
-                        disabled={loading}
-                        activeOpacity={0.8}
-                      >
-                        <Ionicons name="checkmark-outline" size={20} color="#fff" />
-                        <Text style={styles.primaryButtonText}>
-                          {loading ? "Updating..." : "Update User"}
-                        </Text>
-                      </TouchableOpacity>
-                    </Animated.View>
-
-                    <TouchableOpacity
-                      style={[styles.secondaryButton, { flex: 1, marginLeft: 8 }]}
-                      onPress={clearForm}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="close-outline" size={20} color="#6b7280" />
-                      <Text style={styles.secondaryButtonText}>Cancel</Text>
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <Animated.View style={{ transform: [{ scale: buttonScaleAnim }] }}>
-                    <TouchableOpacity
-                      style={styles.primaryButton}
-                      onPress={handleAddUser}
-                      disabled={loading}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="person-add-outline" size={20} color="#fff" />
-                      <Text style={styles.primaryButtonText}>
-                        {loading ? "Adding User..." : "Add User"}
-                      </Text>
-                    </TouchableOpacity>
-                  </Animated.View>
-                )}
-              </View>
-            </View>
-          )}
-        </Animated.View>
-
-        <Animated.View
-          style={[
-            styles.usersList,
+            styles.header,
             {
               opacity: fadeAnim,
               transform: [{ translateY: slideAnim }],
             },
           ]}
         >
-          <View style={styles.usersHeader}>
-            <Text style={styles.usersTitle}>Team Members ({users.length})</Text>
+          <View style={styles.headerContent}>
+            <Text style={styles.heading}>Team Management</Text>
+            <Text style={styles.subHeading}>Manage your team members efficiently</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.toggleFormBtn}
+            onPress={toggleForm}
+            activeOpacity={0.8}
+          >
+            <Ionicons name={showForm ? "close" : "add"} size={20} color="#fff" />
+            <Text style={styles.toggleFormBtnText}>
+              {showForm ? "Close" : "Add Member"}
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
+
+        <ScrollView
+          style={styles.scrollContainer}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <UserForm
+            isVisible={showForm}
+            isEditing={isEditing}
+            onSubmit={handleFormSubmit}
+            onCancel={handleFormCancel}
+            loading={loading}
+            initialData={editingUser}
+          />
+
+          <Animated.View
+            style={[
+              styles.usersSection,
+              {
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }],
+              },
+            ]}
+          >
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Team Members</Text>
+              <View style={styles.memberCount}>
+                <Text style={styles.memberCountText}>{users.length}</Text>
+              </View>
+            </View>
+
             {loading && (
-              <View style={styles.loadingIndicator}>
+              <View style={styles.loadingContainer}>
                 <Text style={styles.loadingText}>Loading...</Text>
               </View>
             )}
-          </View>
 
-          <FlatList
-            data={users}
-            keyExtractor={(item) => item.email}
-            renderItem={renderUser}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 100 }}
-            scrollEnabled={false}
-          />
-        </Animated.View>
-      </ScrollView>
+            <View style={styles.filterContainer}>
+              {/* Search Bar */}
+              <TextInput
+                placeholder="Search users..."
+                value={searchInput}
+                onChangeText={setSearchInput}
+                style={styles.searchInput}
+              />
+
+              {/* Dropdown Filter */}
+              <View style={styles.filterDropdown}>
+                <Menu
+                  visible={menuVisible}
+                  onDismiss={() => setMenuVisible(false)}
+                  anchor={
+                    <TouchableOpacity
+                      style={styles.filterButton}
+                      onPress={() => setMenuVisible(true)}
+                    >
+                      <Text style={styles.filterButtonText}>{roleFilter || "All Roles"}</Text>
+                      <Ionicons name="chevron-down" size={16} color="#64748b" />
+                    </TouchableOpacity>
+                  }
+                >
+                  <Menu.Item onPress={() => handleRoleFilter('')} title="All Roles" />
+                  <Divider />
+                  <Menu.Item onPress={() => handleRoleFilter('client')} title="Client" />
+                  <Divider />
+                  <Menu.Item onPress={() => handleRoleFilter('dealer')} title="Dealer" />
+                  <Divider />
+                  <Menu.Item onPress={() => handleRoleFilter('employee')} title="Employee" />
+                </Menu>
+              </View>
+            </View>
+
+            {memoizedUsersList}
+          </Animated.View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
@@ -488,100 +681,116 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8fafc',
   },
+  container: {
+    flex: 1,
+  },
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 10,
-    backgroundColor: '#fff',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 24,
+    paddingVertical: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: '#e2e8f0',
+  },
+  headerContent: {
+    marginBottom: 20,
   },
   heading: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#1f2937',
-    marginBottom: 4,
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 6,
   },
   subHeading: {
     fontSize: 16,
-    color: '#6b7280',
-    marginBottom: 20,
+    color: '#64748b',
+    fontWeight: '400',
   },
-  addUserButton: {
+  toggleFormBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#3b82f6',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 16,
     shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
-  addUserButtonText: {
-    color: '#fff',
+  toggleFormBtnText: {
+    color: '#ffffff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     marginLeft: 8,
   },
-  container: {
+  scrollContainer: {
     flex: 1,
   },
   formContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: '#ffffff',
     margin: 20,
-    borderRadius: 16,
+    borderRadius: 24,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    elevation: 8,
+    overflow: 'hidden',
   },
-  form: {
-    padding: 20,
+  formHeader: {
+    padding: 24,
+    backgroundColor: '#f8fafc',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
   },
   formTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 20,
-    textAlign: 'center',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  formSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+  },
+  formFields: {
+    padding: 24,
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
-    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
     marginBottom: 16,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
   },
   disabledInput: {
-    backgroundColor: '#f3f4f6',
-    opacity: 0.7,
+    backgroundColor: '#f1f5f9',
+    opacity: 0.6,
   },
-  inputIcon: {
-    marginRight: 12,
+  iconContainer: {
+    paddingLeft: 16,
+    paddingRight: 12,
   },
   input: {
     flex: 1,
     paddingVertical: 16,
+    paddingRight: 16,
     fontSize: 16,
-    color: '#1f2937',
+    color: '#0f172a',
+    fontWeight: '500',
   },
   roleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
-    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
     marginBottom: 16,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
   },
   roleSelector: {
     flex: 1,
@@ -589,98 +798,162 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 16,
+    paddingRight: 16,
   },
   roleSelectorText: {
     fontSize: 16,
-    color: '#1f2937',
+    color: '#0f172a',
+    fontWeight: '500',
   },
   placeholder: {
-    color: '#9ca3af',
+    color: '#94a3b8',
   },
   formActions: {
     flexDirection: 'row',
-    marginTop: 10,
+    marginTop: 12,
   },
-  primaryButton: {
+  primaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#3b82f6',
     paddingVertical: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
-  primaryButtonText: {
-    color: '#fff',
+  primaryBtnText: {
+    color: '#ffffff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     marginLeft: 8,
   },
-  secondaryButton: {
+  secondaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#f1f5f9',
     paddingVertical: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
   },
-  secondaryButtonText: {
-    color: '#6b7280',
+  secondaryBtnText: {
+    color: '#64748b',
     fontSize: 16,
     fontWeight: '600',
     marginLeft: 8,
   },
-  usersList: {
+  usersSection: {
     paddingHorizontal: 20,
+    paddingBottom: 100,
   },
-  usersHeader: {
+  sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  usersTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1f2937',
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#0f172a',
   },
-  loadingIndicator: {
+  memberCount: {
+    backgroundColor: '#3b82f6',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: '#dbeafe',
-    borderRadius: 8,
+    borderRadius: 12,
+  },
+  memberCountText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
   },
   loadingText: {
     color: '#3b82f6',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '500',
   },
-  userCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: '#f3f4f6',
-  },
-  userHeader: {
+  filterContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginBottom: 16,
+    gap: 12,
   },
-  userInfo: {
+  searchInput: {
+    borderColor: '#e2e8f0',
+    borderWidth: 2,
+    borderRadius: 16,
+    padding: 16,
+    flex: 1,
+    fontSize: 16,
+    backgroundColor: '#f8fafc',
+    color: '#0f172a',
+  },
+  filterDropdown: {
     flex: 1,
   },
-  nameRow: {
+  filterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderColor: '#e2e8f0',
+    borderWidth: 2,
+    borderRadius: 16,
+    padding: 16,
+    backgroundColor: '#f8fafc',
+  },
+  filterButtonText: {
+    fontSize: 16,
+    color: '#0f172a',
+    fontWeight: '500',
+  },
+  usersList: {
+    paddingBottom: 20,
+  },
+  userCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  avatarContainer: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#3b82f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  avatarText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  userDetails: {
+    flex: 1,
+  },
+  nameSection: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -688,62 +961,60 @@ const styles = StyleSheet.create({
   },
   userName: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
+    fontWeight: '700',
+    color: '#0f172a',
     flex: 1,
+    marginRight: 8,
   },
   roleBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 12,
   },
   roleBadgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
     marginLeft: 4,
   },
-  contactInfo: {
-    gap: 8,
+  contactSection: {
+    gap: 6,
   },
-  infoRow: {
+  contactRow: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  userEmail: {
-    fontSize: 14,
-    color: '#6b7280',
-    marginLeft: 8,
     flex: 1,
   },
-  userPhone: {
+  contactText: {
     fontSize: 14,
-    color: '#6b7280',
+    color: '#64748b',
     marginLeft: 8,
+    fontWeight: '500',
+    flex: 1,
   },
-  actionContainer: {
+  actionRow: {
     flexDirection: 'row',
     gap: 12,
   },
-  actionButton: {
+  actionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 8,
+    borderRadius: 12,
     flex: 1,
   },
-  editButton: {
+  editBtn: {
     backgroundColor: '#10b981',
   },
-  deleteButton: {
+  deleteBtn: {
     backgroundColor: '#ef4444',
   },
-  actionButtonText: {
-    color: '#fff',
+  actionBtnText: {
+    color: '#ffffff',
     fontSize: 14,
     fontWeight: '600',
     marginLeft: 6,
