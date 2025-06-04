@@ -25,7 +25,6 @@ const Material = () => {
   const [quantity, setQuantity] = useState('');
   const [pricePerUnit, setPricePerUnit] = useState('');
   const [totalPrice, setTotalPrice] = useState('');
-  const [destination, setDestination] = useState('');
 
   // Images - Updated to match backend field names
   const [image1, setImage1] = useState(null);
@@ -52,7 +51,7 @@ const Material = () => {
   const [editingId, setEditingId] = useState(null);
 
   // Status field
-  const [status, setStatus] = useState('pending');
+  const [status, setStatus] = useState('Confirmed');
 
   // Base URL for your API
   const API_BASE_URL = 'http://192.168.1.7:3000';
@@ -158,21 +157,20 @@ const Material = () => {
   };
 
   const handleAddOrUpdateMaterial = async () => {
-    // Updated validation to match backend required fields
-    if (!materialName || !materialDetails || !quantity || !pricePerUnit || !destination) {
-      Alert.alert('Validation Error', 'Please fill all required fields: Material Name, Details, Quantity, Price per Unit, and Destination.');
+    // Updated validation to remove destination requirement
+    if (!materialName || !materialDetails || !quantity || !pricePerUnit) {
+      Alert.alert('Validation Error', 'Please fill all required fields: Material Name, Details, Quantity, and Price per Unit.');
       return;
     }
 
     try {
       const formData = new FormData();
 
-      // Add form fields matching backend expectations
+      // Add form fields matching backend expectations (removed destination)
       formData.append('material_Name', materialName);
       formData.append('detail', materialDetails);
       formData.append('quantity', quantity);
       formData.append('price_per_unit', pricePerUnit);
-      formData.append('destination', destination);
       formData.append('pickup_location', pickupLocation || '');
       formData.append('drop_location', dropLocation || '');
       formData.append('c_id', customerId || '');
@@ -251,7 +249,6 @@ const Material = () => {
     setQuantity('');
     setPricePerUnit('');
     setTotalPrice('');
-    setDestination('');
     setImage1(null);
     setImage2(null);
     setImage3(null);
@@ -263,7 +260,7 @@ const Material = () => {
     setCustomerNumber('');
     setPickupLocation('');
     setDropLocation('');
-    setStatus('pending');
+    setStatus('Confirmed');
     setEditIndex(null);
     setEditingId(null);
   };
@@ -298,12 +295,11 @@ const Material = () => {
     setQuantity(shipment.quantity?.toString() || '');
     setPricePerUnit(shipment.price_per_unit?.toString() || '');
     setTotalPrice(shipment.total_price?.toString() || '');
-    setDestination(shipment.destination || '');
     setPickupLocation(shipment.pickup_location || '');
     setDropLocation(shipment.drop_location || '');
     setEmployeeId(shipment.e_id || '');
     setCustomerId(shipment.c_id || '');
-    setStatus(shipment.status || 'pending');
+    setStatus(shipment.status || 'Confirmed');
     
     // Note: Images from backend might be file paths, handle accordingly
     setImage1(shipment.image1 ? `${API_BASE_URL}/${shipment.image1}` : null);
@@ -384,20 +380,6 @@ const Material = () => {
                 left={<TextInput.Icon icon="information-outline" color="#FB923C" />}
                 value={materialDetails}
                 onChangeText={setMaterialDetails}
-                theme={{ colors: { primary: '#FB923C' } }}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Destination *"
-                mode="outlined"
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                left={<TextInput.Icon icon="map-marker" color="#FB923C" />}
-                value={destination}
-                onChangeText={setDestination}
                 theme={{ colors: { primary: '#FB923C' } }}
               />
             </View>
@@ -694,10 +676,7 @@ const Material = () => {
                         Total: ₹{material.total_price}
                       </Text>
                       <Text style={styles.materialDetailText}>
-                        Destination: {material.destination}
-                      </Text>
-                      <Text style={styles.materialDetailText}>
-                        Status: {material.status || 'pending'}
+                        Status: {material.status || 'Confirmed'}
                       </Text>
                     </View>
 
@@ -911,112 +890,253 @@ const styles = StyleSheet.create({
   },
   rowInputs: {
     flexDirection: 'row',
-    gap: 12,
+    justifyContent: 'space-between',
     marginBottom: 20,
   },
   halfInput: {
-    flex: 1,
+    flex: 0.48,
   },
   totalPriceContainer: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    shadowColor: '#EA580C',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    marginTop: 4,
+    alignItems: 'center',
   },
   totalPriceCard: {
-    backgroundColor: '#EA580C',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    alignItems: 'center',
+    backgroundColor: '#FB923C',
+    padding: 16,
     borderRadius: 12,
+    alignItems: 'center',
+    minWidth: 200,
   },
   totalPriceLabel: {
     color: 'white',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
-    opacity: 0.9,
     marginBottom: 4,
   },
   totalPriceValue: {
     color: 'white',
-    fontSize: 18,
-    fontWeight: '800',
+    fontSize: 24,
+    fontWeight: '700',
   },
   imageUploadContainer: {
     marginBottom: 20,
   },
   imageUploadTitle: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#C2410C',
-    marginBottom: 8,
-  },
-  required: {
-    color: '#DC2626',
-    fontWeight: '600',
+    color: '#A16207',
+    marginBottom: 12,
   },
   imageUploadButton: {
     borderRadius: 12,
     overflow: 'hidden',
-  },
-  uploadedImage: {
-    width: '100%',
-    height: 180,
-    borderRadius: 12,
     borderWidth: 2,
-    borderColor: '#FDBA74', // Light orange border
-  },
-  imagePlaceholder: {
-    height: 120,
-    backgroundColor: '#FEF3E2', // Very light orange
-    borderWidth: 2,
-    borderColor: '#FDBA74', // Light orange border
+    borderColor: '#FDBA74',
     borderStyle: 'dashed',
-    borderRadius: 12,
-    justifyContent: 'center',
+  },
+  imagePreviewContainer: {
+    position: 'relative',
+  },
+  imagePreview: {
+    width: '100%',
+    height: 200,
+    resizeMode: 'cover',
+  },
+  imageOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 8,
     alignItems: 'center',
   },
+  imageOverlayText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  imagePlaceholder: {
+    height: 200,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FEF3E2',
+  },
   imagePlaceholderIcon: {
-    fontSize: 32,
+    fontSize: 48,
     marginBottom: 8,
   },
   imagePlaceholderText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#A16207',
+    marginBottom: 4,
+  },
+  imagePlaceholderSubtext: {
     fontSize: 14,
-    color: '#A16207', // Muted orange
-    fontWeight: '500',
+    color: '#92400E',
   },
   imageRow: {
     flexDirection: 'row',
-    gap: 12,
+    justifyContent: 'space-between',
   },
   imageCol: {
-    flex: 1,
+    flex: 0.48,
   },
-  submitButton: {
-    backgroundColor: '#EA580C', // Deep orange
-    marginHorizontal: 16,
-    paddingVertical: 18,
+  modernButton: {
+    backgroundColor: '#FB923C',
     borderRadius: 16,
-    shadowColor: '#EA580C',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
+    marginVertical: 12,
+    shadowColor: '#FB923C',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
     elevation: 8,
-    borderWidth: 1,
-    borderColor: '#FB923C', // Lighter orange border
   },
-  submitButtonText: {
-    color: '#FFFFFF',
+  buttonContainer: {
+    paddingVertical: 18,
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: 'white',
     fontSize: 18,
     fontWeight: '700',
+  },
+  cancelButton: {
+    backgroundColor: '#DC2626',
+    borderRadius: 16,
+    marginVertical: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  refreshButton: {
+    backgroundColor: 'white',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+  },
+  refreshButtonText: {
+    color: '#FB923C',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  emptyStateIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  emptyStateTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#A16207',
+    marginBottom: 8,
+  },
+  emptyStateSubtitle: {
+    fontSize: 16,
+    color: '#92400E',
     textAlign: 'center',
   },
-  bottomPadding: {
-    height: 40,
+  materialCard: {
+    backgroundColor: '#FEF3E2',
+    borderRadius: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+  },
+  materialCardContent: {
+    padding: 16,
+  },
+  materialHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  materialName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#A16207',
+    flex: 1,
+  },
+  materialActions: {
+    flexDirection: 'row',
+  },
+  editButton: {
+    backgroundColor: '#FB923C',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  editButtonText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  deleteButton: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  deleteButtonText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  materialDetails: {
+    marginBottom: 12,
+  },
+  materialDetailText: {
+    fontSize: 14,
+    color: '#92400E',
+    marginBottom: 4,
+  },
+  materialTotalPrice: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FB923C',
+    marginBottom: 4,
+  },
+  materialLocations: {
+    marginBottom: 12,
+  },
+  locationText: {
+    fontSize: 14,
+    color: '#92400E',
+    marginBottom: 4,
+  },
+  materialEmployeeCustomer: {
+    marginBottom: 12,
+  },
+  empCustText: {
+    fontSize: 14,
+    color: '#92400E',
+    marginBottom: 4,
+  },
+  materialImageContainer: {
+    marginTop: 12,
+  },
+  materialImage: {
+    width: '100%',
+    height: 150,
+    borderRadius: 8,
+    resizeMode: 'cover',
+  },
+  required: {
+    color: '#DC2626',
+  },
+  activeModernTab: {
+    backgroundColor: '#FB923C',
   },
 });
 

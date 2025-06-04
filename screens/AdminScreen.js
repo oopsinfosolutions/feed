@@ -18,7 +18,6 @@ const AdminScreen = () => {
   const navigation = useNavigation();
   const [usersCount, setUsersCount] = useState(0);
   const [materialsCount, setMaterialsCount] = useState(0);
-  const [reportsCount, setReportsCount] = useState(0);
   const [projectsCount, setProjectsCount] = useState(0);
   
   // Animation values
@@ -26,31 +25,36 @@ const AdminScreen = () => {
   const slideAnim = new Animated.Value(50);
 
   useEffect(() => {
-    // Simulate API calls with loading animation
     const loadData = async () => {
-      // Animate entrance
-      Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 800,
-          useNativeDriver: true,
-        }),
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 600,
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      // Simulate data loading
-      setTimeout(() => {
-        setUsersCount(1247);
-        setMaterialsCount(589);
-        setReportsCount(342);
-        setProjectsCount(856);
-      }, 500);
+      try {
+        Animated.parallel([
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(slideAnim, {
+            toValue: 0,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+        ]).start();
+ 
+        setTimeout(async () => {
+          const response = await fetch('http://192.168.1.7:3000/counts');
+          if (!response.ok) throw new Error('Failed to fetch counts');
+          const data = await response.json();
+ 
+          setUsersCount(data.usersCount);
+          setMaterialsCount(data.materialsCount);
+        
+          setProjectsCount(data.projectsCount);
+        }, 500);
+      } catch (error) {
+        console.error('Error loading data:', error);
+      }
     };
-
+ 
     loadData();
   }, []);
 
@@ -180,11 +184,11 @@ const AdminScreen = () => {
             />
             <StatsCard
               icon="bar-chart-outline"
-              title="Reports"
-              count={reportsCount}
+              title="History"
+              count={materialsCount}
               color="#f59e0b"
               gradient="rgba(245, 158, 11, 0.2)"
-              route="#"
+              route="History"
               delay={300}
             />
             <StatsCard
