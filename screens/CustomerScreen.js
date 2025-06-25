@@ -40,7 +40,7 @@ const CustomerScreen = ({ route }) => {
   const [loading, setLoading] = useState(false);
 
   // Base URL for your API
-  const API_BASE_URL = 'http://192.168.1.7:3000';
+  const API_BASE_URL = 'http://192.168.1.15:3000';
 
   // Get user ID from AsyncStorage on component mount
   useEffect(() => {
