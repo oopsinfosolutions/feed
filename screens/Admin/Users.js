@@ -450,7 +450,7 @@ const Users = () => {
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await axios.get('http://192.168.1.7:3000/');
+      const response = await axios.get('http://192.168.1.15:3000/');
       setUsers(response.data);
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -471,7 +471,7 @@ const Users = () => {
         type: formData.role
       };
       if (isEditing) {
-        await axios.put(`http://192.168.1.7:3000/update-user/${editingUser.email}`, {
+        await axios.put(`http://192.168.1.15:3000/update-user/${editingUser.email}`, {
           name: userData.name,
           password: userData.password,
           phone: userData.phone,
@@ -479,7 +479,7 @@ const Users = () => {
         });
         Alert.alert('Success', 'User updated successfully!');
       } else {
-        await axios.post('http://192.168.1.7:3000/signup', userData);
+        await axios.post('http://192.168.1.15:3000/signup', userData);
         Alert.alert('Success', 'User added successfully!');
       }
       await fetchUsers();
@@ -501,7 +501,7 @@ const Users = () => {
   const handleDeleteUser = useCallback(async (emailToDelete) => {
     setLoading(true);
     try {
-      await axios.delete(`http://192.168.1.7:3000/delete-user/${emailToDelete}`);
+      await axios.delete(`http://192.168.1.15:3000/delete-user/${emailToDelete}`);
       setUsers(prevUsers => prevUsers.filter(user => user.email !== emailToDelete));
       Alert.alert('Success', 'User deleted successfully!');
     } catch (error) {

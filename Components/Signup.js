@@ -12,51 +12,95 @@ import { Menu, Divider, Button } from 'react-native-paper';
 import axios from 'axios';
 
 const Signup = ({ navigation }) => {
-  const [name, setName] = useState('');
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState('Select Role');
+  const [type, setType] = useState('Select Role');
   const [menuVisible, setMenuVisible] = useState(false);
   const [users, setUsers] = useState([]);
 
   const openMenu = () => setMenuVisible(true);
   const closeMenu = () => setMenuVisible(false);
 
+  // Generate unique user_id
+  const generateUserId = () => {
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 1000);
+    return `USER_${timestamp}_${random}`;
+  };
+
   const handleSignup = async () => {
-    if (!name || !email || !password || !phone || role === 'Select Role') {
+    if (!fullName || !email || !password || !phone || type === 'Select Role') {
       Alert.alert('Validation Error', 'All fields and role selection are required!');
       return;
     }
 
-    const newUser = { name, email, password, phone, type: role };
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Validation Error', 'Please enter a valid email address!');
+      return;
+    }
+
+    // Phone validation (basic)
+    if (phone.length < 10) {
+      Alert.alert('Validation Error', 'Please enter a valid phone number!');
+      return;
+    }
+
+    // Password validation
+    if (password.length < 6) {
+      Alert.alert('Validation Error', 'Password must be at least 6 characters long!');
+      return;
+    }
+
+    const newUser = { 
+      fullName, 
+      email, 
+      password, 
+      phone, 
+      type,
+      user_id: generateUserId()
+    };
 
     try {
       console.log('Sending User:', newUser);
-      const response = await axios.post('http://192.168.1.7:3000/signup', newUser);
+      const response = await axios.post('http://192.168.1.15:3000/signup', newUser);
 
       console.log('Server Response:', response.data);
       setUsers([...users, { id: response.data.id || Math.random(), ...newUser }]);
-      setName('');
+      
+      // Reset form
+      setFullName('');
       setEmail('');
       setPassword('');
       setPhone('');
-      setRole('Select Role');
+      setType('Select Role');
+      
       Alert.alert('Success', 'User signed up successfully!');
 
-      
     } catch (error) {
       console.error('Signup Error:', error);
-      Alert.alert('Error', 'Failed to signup. Try again.');
+      
+      // Handle specific error messages from server
+      if (error.response && error.response.data && error.response.data.message) {
+        Alert.alert('Error', error.response.data.message);
+      } else if (error.response && error.response.status === 409) {
+        Alert.alert('Error', 'Email or User ID already exists!');
+      } else {
+        Alert.alert('Error', 'Failed to signup. Please try again.');
+      }
     }
   };
 
   const renderUser = ({ item }) => (
     <View style={styles.userCard}>
-      <Text style={styles.userName}>{item.name}</Text>
+      <Text style={styles.userName}>{item.fullName}</Text>
       <Text style={styles.userEmail}>{item.email}</Text>
       <Text style={styles.userPhone}>{item.phone}</Text>
-      <Text style={styles.userPhone}>Role: {item.type}</Text>
+      <Text style={styles.userRole}>Role: {item.type}</Text>
+      <Text style={styles.userId}>ID: {item.user_id}</Text>
     </View>
   );
 
@@ -66,9 +110,10 @@ const Signup = ({ navigation }) => {
 
       <TextInput
         style={styles.input}
-        placeholder="Enter your name"
-        value={name}
-        onChangeText={setName}
+        placeholder="Enter your full name"
+        value={fullName}
+        onChangeText={setFullName}
+        autoCapitalize="words"
       />
 
       <TextInput
@@ -77,14 +122,17 @@ const Signup = ({ navigation }) => {
         keyboardType="email-address"
         value={email}
         onChangeText={setEmail}
+        autoCapitalize="none"
+        autoCompleteType="email"
       />
 
       <TextInput
         style={styles.input}
-        placeholder="Enter your password"
+        placeholder="Enter your password (min 6 characters)"
         secureTextEntry
         value={password}
         onChangeText={setPassword}
+        autoCapitalize="none"
       />
 
       <TextInput
@@ -104,15 +152,29 @@ const Signup = ({ navigation }) => {
             onPress={openMenu}
             style={styles.menuButton}
           >
-            {role}
+            {type}
           </Button>
         }
       >
-        <Menu.Item onPress={() => { setRole('Client'); closeMenu(); }} title="Client" />
+        <Menu.Item 
+          onPress={() => { setType('Client'); closeMenu(); }} 
+          title="Client" 
+        />
         <Divider />
-        <Menu.Item onPress={() => { setRole('Dealer'); closeMenu(); }} title="Dealer" />
+        <Menu.Item 
+          onPress={() => { setType('dealer'); closeMenu(); }} 
+          title="Dealer" 
+        />
         <Divider />
-        <Menu.Item onPress={() => { setRole('Employee'); closeMenu(); }} title="Employee" />
+        <Menu.Item 
+          onPress={() => { setType('field_employee'); closeMenu(); }} 
+          title="Field Employee" 
+        />
+        <Divider />
+        <Menu.Item 
+          onPress={() => { setType('office_employee'); closeMenu(); }} 
+          title="Office Employee" 
+        />
       </Menu>
 
       <TouchableOpacity style={styles.signupButton} onPress={handleSignup}>
@@ -128,12 +190,17 @@ const Signup = ({ navigation }) => {
         </Text>
       </TouchableOpacity>
 
-      <Text style={styles.submittedUsersHeading}>Submitted Users:</Text>
-      <FlatList
-        data={users}
-        keyExtractor={(item) => item.id.toString()}
-        renderItem={renderUser}
-      />
+      {users.length > 0 && (
+        <>
+          <Text style={styles.submittedUsersHeading}>Submitted Users:</Text>
+          <FlatList
+            data={users}
+            keyExtractor={(item) => item.id.toString()}
+            renderItem={renderUser}
+            style={styles.usersList}
+          />
+        </>
+      )}
     </View>
   );
 };
@@ -193,6 +260,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     color: '#333',
   },
+  usersList: {
+    maxHeight: 200,
+  },
   userCard: {
     backgroundColor: '#fff',
     padding: 15,
@@ -213,6 +283,15 @@ const styles = StyleSheet.create({
   userPhone: {
     fontSize: 16,
     color: '#666',
+  },
+  userRole: {
+    fontSize: 16,
+    color: '#666',
+  },
+  userId: {
+    fontSize: 14,
+    color: '#999',
+    fontStyle: 'italic',
   },
 });
 

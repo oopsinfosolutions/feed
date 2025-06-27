@@ -41,7 +41,7 @@ const AdminScreen = () => {
         ]).start();
  
         setTimeout(async () => {
-          const response = await fetch('http://192.168.1.7:3000/counts');
+          const response = await fetch('http://192.168.1.15:3000/counts');
           if (!response.ok) throw new Error('Failed to fetch counts');
           const data = await response.json();
  
@@ -193,11 +193,11 @@ const AdminScreen = () => {
             />
             <StatsCard
               icon="briefcase-outline"
-              title="Projects"
+              title="Dealers"
               count={projectsCount}
               color="#ef4444"
               gradient="rgba(239, 68, 68, 0.2)"
-              route="#"
+              route="Dealers"
               delay={400}
             />
           </View>

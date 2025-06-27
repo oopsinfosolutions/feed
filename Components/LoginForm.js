@@ -19,7 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const { width, height } = Dimensions.get('window');
 
 const LoginForm = ({ navigation }) => {
-  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -41,58 +41,107 @@ const LoginForm = ({ navigation }) => {
     ]).start();
   }, []);
 
+  const validatePhoneNumber = (phoneNumber) => {
+    if (!phoneNumber || phoneNumber.trim() === '') {
+      return false;
+    }
+    
+    const cleaned = phoneNumber.replace(/\D/g, '');
+    // Accept any 10-digit number
+    const phoneRegex = /^\d{10}$/;
+    
+    return phoneRegex.test(cleaned);
+  };
+
+  // Improved navigation function with better user type handling
+  const navigateToUserScreen = (userType, userId) => {
+    console.log('Original user type from server:', userType);
+    console.log('User ID:', userId);
+    
+    // Normalize the user type for comparison
+    const normalizedType = userType.toLowerCase().trim().replace(/\s+/g, '_');
+    console.log('Normalized user type:', normalizedType);
+    
+    const navigationMap = {
+      'dealer': 'DealerScreen',
+      'client': 'CustomerScreen',
+      'customer': 'CustomerScreen',
+      'field_employee': 'EmployeeScreen',
+      'field-employee': 'EmployeeScreen',
+      'fieldemployee': 'EmployeeScreen',
+      'employee': 'EmployeeScreen',
+      'office_employee': 'OfficeEmployeeScreen',
+      'office-employee': 'OfficeEmployeeScreen',
+      'officeemployee': 'OfficeEmployeeScreen',
+      'office': 'OfficeEmployeeScreen',
+      'admin': 'AdminScreen',
+      'administrator': 'AdminScreen'
+    };
+    
+    const screenName = navigationMap[normalizedType];
+    
+    if (screenName) {
+      console.log(`Navigating to: ${screenName} with userId: ${userId}`);
+      navigation.navigate(screenName, { customerId: userId });
+    } else {
+      console.log('Available navigation options:', Object.keys(navigationMap));
+      Alert.alert(
+        'Navigation Error', 
+        `Unknown user role: "${userType}". Please contact support.\n\nReceived type: ${userType}\nNormalized: ${normalizedType}`
+      );
+    }
+  };
+
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Validation Error', 'Please enter both email and password.');
+    if (!phone || !password) {
+      Alert.alert('Validation Error', 'Please enter both phone number and password.');
       return;
     }
   
-    if (!email.includes('@')) {
-      Alert.alert('Validation Error', 'Please enter a valid email address.');
+    if (!validatePhoneNumber(phone)) {
+      Alert.alert('Validation Error', 'Please enter a valid 10-digit phone number.');
       return;
     }
   
     setLoading(true);
   
     try {
-      const response = await axios.post('http://192.168.1.7:3000/login', {
-        email: email.toLowerCase().trim(),
+      // Send phone number exactly as typed in the field
+      const phoneToSend = phone.trim();
+      
+      console.log('Sending login request with:', { phone: phoneToSend, password });
+      
+      const response = await axios.post('http://192.168.1.15:3000/login', {
+        phone: phoneToSend,
         password,
       });
+
+      console.log('Login response:', response.data);
   
       if (response.data.error) {
         Alert.alert('Login Failed', response.data.error);
       } else {
-        const { type, id } = response.data;
+        const { type, id, fullName } = response.data;
+        
+        console.log('User type received from server:', type);
+        console.log('User ID received:', id);
+        console.log('Full name received:', fullName);
   
         try {
-          // Save user_id and user_type in AsyncStorage with error handling
+          // Store user data in AsyncStorage
           await AsyncStorage.setItem('user_id', String(id));
           await AsyncStorage.setItem('user_type', type);
-          await AsyncStorage.setItem('user_email', email.toLowerCase().trim());
+          await AsyncStorage.setItem('user_phone', phoneToSend);
+          if (fullName) {
+            await AsyncStorage.setItem('user_name', fullName);
+          }
   
-          // Show success message
           Alert.alert('Success', 'Login successful!', [
             {
               text: 'OK',
               onPress: () => {
-                // Navigate based on user type
-                switch (type) {
-                  case 'Dealer':
-                    navigation.navigate('DealerScreen', { customerId: id });
-                    break;
-                  case 'Client':
-                    navigation.navigate('CustomerScreen', { customerId: id });
-                    break;
-                  case 'Employee':
-                    navigation.navigate('EmployeeScreen', { customerId: id });
-                    break;
-                  case 'admin':
-                    navigation.navigate('AdminScreen', { customerId: id });
-                    break;
-                  default:
-                    Alert.alert('Error', 'Unknown user role');
-                }
+                // Use the improved navigation function
+                navigateToUserScreen(type, id);
               }
             }
           ]);
@@ -104,14 +153,25 @@ const LoginForm = ({ navigation }) => {
     } catch (error) {
       console.error('Login error:', error);
       if (error.response) {
+        console.error('Error response:', error.response.data);
         Alert.alert('Login Failed', error.response.data?.error || 'Server error occurred');
       } else if (error.request) {
+        console.error('Network error:', error.request);
         Alert.alert('Network Error', 'Unable to connect to server. Please check your internet connection.');
       } else {
+        console.error('Request error:', error.message);
         Alert.alert('Error', 'An unexpected error occurred. Please try again.');
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePhoneChange = (text) => {
+    // Allow any digits, not just numbers starting with 6-9
+    const cleaned = text.replace(/\D/g, '');
+    if (cleaned.length <= 10) {
+      setPhone(cleaned);
     }
   };
 
@@ -126,10 +186,8 @@ const LoginForm = ({ navigation }) => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Background Gradient Effect */}
           <View style={styles.backgroundGradient} />
           
-          {/* Animated Login Container */}
           <Animated.View 
             style={[
               styles.loginCard,
@@ -139,7 +197,6 @@ const LoginForm = ({ navigation }) => {
               }
             ]}
           >
-            {/* Header Section */}
             <View style={styles.headerSection}>
               <View style={styles.logoContainer}>
                 <Text style={styles.logoText}>🚚</Text>
@@ -148,21 +205,20 @@ const LoginForm = ({ navigation }) => {
               <Text style={styles.subtitle}>Sign in to continue to your account</Text>
             </View>
 
-            {/* Form Section */}
             <View style={styles.formSection}>
               <View style={styles.inputContainer}>
                 <TextInput
-                  label="Email Address"
-                  value={email}
-                  onChangeText={setEmail}
+                  label="Phone Number"
+                  value={phone}
+                  onChangeText={handlePhoneChange}
                   mode="outlined"
                   style={styles.input}
                   outlineColor="#E0E7FF"
                   activeOutlineColor="#6366F1"
-                  left={<TextInput.Icon icon="email-outline" color="#6366F1" />}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
+                  left={<TextInput.Icon icon="phone-outline" color="#6366F1" />}
+                  keyboardType="phone-pad"
+                  placeholder="Enter 10-digit mobile number"
+                  maxLength={10}
                   theme={{
                     colors: {
                       primary: '#6366F1',
@@ -199,12 +255,10 @@ const LoginForm = ({ navigation }) => {
                 />
               </View>
 
-              {/* Forgot Password Link */}
               <TouchableOpacity style={styles.forgotPassword}>
                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
               </TouchableOpacity>
 
-              {/* Login Button */}
               <TouchableOpacity
                 style={[styles.loginButton, loading && styles.loginButtonDisabled]}
                 onPress={handleLogin}
@@ -223,14 +277,12 @@ const LoginForm = ({ navigation }) => {
                 </View>
               </TouchableOpacity>
 
-              {/* Divider */}
               <View style={styles.dividerContainer}>
                 <View style={styles.dividerLine} />
                 <Text style={styles.dividerText}>or</Text>
                 <View style={styles.dividerLine} />
               </View>
 
-              {/* Sign Up Link */}
               <TouchableOpacity
                 style={styles.signupButton}
                 onPress={() => navigation.navigate('Signup')}
@@ -243,7 +295,6 @@ const LoginForm = ({ navigation }) => {
             </View>
           </Animated.View>
 
-          {/* Footer */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>Secure • Reliable • Fast</Text>
           </View>
@@ -338,6 +389,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     fontSize: 16,
     height: 56,
+  },
+  phonePreview: {
+    fontSize: 12,
+    color: '#6366F1',
+    marginTop: 4,
+    marginLeft: 4,
+    fontWeight: '500',
   },
   forgotPassword: {
     alignItems: 'flex-end',
