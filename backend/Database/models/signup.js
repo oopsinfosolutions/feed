@@ -7,7 +7,7 @@ const SignUp = sequelize.define("SignUp", {
     autoIncrement: true,
     primaryKey: true,
   },
-  fullName: {
+  fullname: {
     type: DataTypes.STRING,
     allowNull: false,
   },
