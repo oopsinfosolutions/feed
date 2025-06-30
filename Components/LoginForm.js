@@ -121,19 +121,19 @@ const LoginForm = ({ navigation }) => {
       if (response.data.error) {
         Alert.alert('Login Failed', response.data.error);
       } else {
-        const { type, id, fullName } = response.data;
+        const { type, id, fullname } = response.data;
         
         console.log('User type received from server:', type);
         console.log('User ID received:', id);
-        console.log('Full name received:', fullName);
+        console.log('Full name received:', fullname);
   
         try {
           // Store user data in AsyncStorage
           await AsyncStorage.setItem('user_id', String(id));
           await AsyncStorage.setItem('user_type', type);
           await AsyncStorage.setItem('user_phone', phoneToSend);
-          if (fullName) {
-            await AsyncStorage.setItem('user_name', fullName);
+          if (fullname) {
+            await AsyncStorage.setItem('user_name', fullname);
           }
   
           Alert.alert('Success', 'Login successful!', [

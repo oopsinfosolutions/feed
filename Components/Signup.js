@@ -12,7 +12,7 @@ import { Menu, Divider, Button } from 'react-native-paper';
 import axios from 'axios';
 
 const Signup = ({ navigation }) => {
-  const [fullName, setFullName] = useState('');
+  const [fullname, setfullname] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
@@ -31,7 +31,7 @@ const Signup = ({ navigation }) => {
   };
 
   const handleSignup = async () => {
-    if (!fullName || !email || !password || !phone || type === 'Select Role') {
+    if (!fullname || !email || !password || !phone || type === 'Select Role') {
       Alert.alert('Validation Error', 'All fields and role selection are required!');
       return;
     }
@@ -56,7 +56,7 @@ const Signup = ({ navigation }) => {
     }
 
     const newUser = { 
-      fullName, 
+      fullname, 
       email, 
       password, 
       phone, 
@@ -72,7 +72,7 @@ const Signup = ({ navigation }) => {
       setUsers([...users, { id: response.data.id || Math.random(), ...newUser }]);
       
       // Reset form
-      setFullName('');
+      setfullname('');
       setEmail('');
       setPassword('');
       setPhone('');
@@ -96,7 +96,7 @@ const Signup = ({ navigation }) => {
 
   const renderUser = ({ item }) => (
     <View style={styles.userCard}>
-      <Text style={styles.userName}>{item.fullName}</Text>
+      <Text style={styles.userName}>{item.fullname}</Text>
       <Text style={styles.userEmail}>{item.email}</Text>
       <Text style={styles.userPhone}>{item.phone}</Text>
       <Text style={styles.userRole}>Role: {item.type}</Text>
@@ -111,8 +111,8 @@ const Signup = ({ navigation }) => {
       <TextInput
         style={styles.input}
         placeholder="Enter your full name"
-        value={fullName}
-        onChangeText={setFullName}
+        value={fullname}
+        onChangeText={setfullname}
         autoCapitalize="words"
       />
 
