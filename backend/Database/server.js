@@ -9,6 +9,7 @@ const path = require("path");
 const fs = require('fs');
 require("dotenv").config();
 
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -331,6 +332,7 @@ app.post('/login', async (req, res) => {
 
 // ADMIN ROUTES - MATERIALS
 // GET: Fetch all data with filtering and sorting options - FIXED
+// Fixed API routes with proper column selection
 app.get('/api/admin/all-data', async (req, res) => {
   try {
     const { 
@@ -369,11 +371,44 @@ app.get('/api/admin/all-data', async (req, res) => {
 
     const offset = (page - 1) * limit;
     
+    // FIX: Specify only the columns that exist in your table
     const { count, rows: materials } = await Material.findAndCountAll({
       where: whereClause,
       order: [[sortBy, sortOrder]],
       limit: parseInt(limit),
-      offset: parseInt(offset)
+      offset: parseInt(offset),
+      attributes: [
+        'id',
+        'detail',
+        'price_per_unit',
+        'total_price',
+        'destination',
+        'pickup_location',
+        'drop_location',
+        'c_id',
+        'e_id',
+        'status',
+        'image1',
+        'image2',
+        'image3',
+        'video',
+        'video1',
+        'video2',
+        'video3',
+        'address',
+        'pincode',
+        'latitude',
+        'longitude',
+        'name',
+        'phone',
+        'unit',
+        'quantity',
+        'offer',
+        'need_product',
+        'shipment_date',
+        'createdAt',
+        'updatedAt'
+      ]
     });
 
     // Categorize data by source
@@ -420,7 +455,40 @@ app.get('/api/admin/data/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    const material = await Material.findByPk(id);
+    const material = await Material.findByPk(id, {
+      attributes: [
+        'id',
+        'detail',
+        'price_per_unit',
+        'total_price',
+        'destination',
+        'pickup_location',
+        'drop_location',
+        'c_id',
+        'e_id',
+        'status',
+        'image1',
+        'image2',
+        'image3',
+        'video',
+        'video1',
+        'video2',
+        'video3',
+        'address',
+        'pincode',
+        'latitude',
+        'longitude',
+        'name',
+        'phone',
+        'unit',
+        'quantity',
+        'offer',
+        'need_product',
+        'shipment_date',
+        'createdAt',
+        'updatedAt'
+      ]
+    });
     
     if (!material) {
       return res.status(404).json({
@@ -444,6 +512,45 @@ app.get('/api/admin/data/:id', async (req, res) => {
   }
 });
 
+app.put('/api/admin/update-status/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    // Validate status
+    const validStatuses = ['pending', 'approved', 'rejected', 'submitted'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status. Must be one of: pending, approved, rejected, submitted'
+      });
+    }
+    
+    const [updatedRowsCount] = await Material.update(
+      { status }, 
+      { where: { id } }
+    );
+    
+    if (updatedRowsCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Record not found'
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'Status updated successfully' 
+    });
+  } catch (error) {
+    console.error('Error updating status:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 // PUT: Update any record by ID
 app.put('/api/admin/update/:id', upload.fields([
   { name: 'image1' }, { name: 'image2' }, { name: 'image3' },
@@ -453,7 +560,9 @@ app.put('/api/admin/update/:id', upload.fields([
     const { id } = req.params;
     const {
       name, phone, address, pincode,
-      latitude, longitude, detail, status
+      latitude, longitude, detail, status,
+      price_per_unit, total_price, destination,
+      pickup_location, drop_location, unit, quantity
     } = req.body;
 
     const material = await Material.findByPk(id);
@@ -474,7 +583,14 @@ app.put('/api/admin/update/:id', upload.fields([
       latitude: latitude || material.latitude,
       longitude: longitude || material.longitude,
       detail: detail || material.detail,
-      status: status || material.status
+      status: status || material.status,
+      price_per_unit: price_per_unit || material.price_per_unit,
+      total_price: total_price || material.total_price,
+      destination: destination || material.destination,
+      pickup_location: pickup_location || material.pickup_location,
+      drop_location: drop_location || material.drop_location,
+      unit: unit || material.unit,
+      quantity: quantity || material.quantity
     };
 
     // Update file fields only if new files are uploaded
@@ -544,6 +660,31 @@ app.delete('/api/admin/delete/:id', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Add this function to check your database schema
+app.get('/api/admin/check-schema', async (req, res) => {
+  try {
+    const [results] = await sequelize.query(`
+      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'shipment_details' 
+      AND TABLE_SCHEMA = 'feed'
+      ORDER BY ORDINAL_POSITION
+    `);
+    
+    res.json({
+      success: true,
+      message: 'Database schema retrieved successfully',
+      columns: results
+    });
+  } catch (error) {
+    console.error('Error checking schema:', error);
+    res.status(500).json({
+      success: false,
       error: error.message
     });
   }
@@ -928,46 +1069,36 @@ app.post('/api/submit', upload.fields([
 });
 
 // OFFICE ROUTES
-// GET: Fetch materials with filtering - FIXED
-app.get('/api/materials', async (req, res) => {
+// POST: Add new material request from office
+// 🔹 GET: Fetch all office data (no userId needed)
+app.get('/view_details', async (req, res) => {
   try {
-    const { status, source, limit = 100 } = req.query;
-    
-    let whereClause = {};
-    
-    if (status && status !== 'all') {
-      whereClause.status = status;
-    }
-    
-    if (source === 'office') {
-      whereClause.image1 = { [Op.is]: null };
-    }
-    
-    const materials = await Material.findAll({
-      where: whereClause,
-      order: [['createdAt', 'DESC']],
-      limit: parseInt(limit)
+    const data = await Material.findAll({
+      where: { role: 'office' },
+      order: [['createdAt', 'DESC']]
     });
 
-    res.status(200).json({
-      success: true,
-      data: materials,
-      count: materials.length
-    });
+    res.status(200).json({ success: true, data });
   } catch (error) {
-    console.error('Error fetching materials:', error);
+    console.error('Error fetching office data:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error',
+      message: 'Error fetching office data',
       error: error.message
     });
   }
 });
 
-// POST: Add new material request from office (Enhanced with validation)
-app.post('/api/add_by_office', async (req, res) => {
+
+// 🔹 POST: Submit material request from office
+app.post('/add_details', async (req, res) => {
   try {
-    const { name, address, phone, detail, status = 'pending' } = req.body;
+    let { userId, name, address, phone, detail } = req.body;
+
+    // Auto-generate a userId if not provided
+    if (!userId) {
+      userId = 'OFF-' + Math.floor(100000 + Math.random() * 900000); // e.g., OFF-123456
+    }
 
     if (!name || !address || !phone || !detail) {
       return res.status(400).json({
@@ -977,11 +1108,13 @@ app.post('/api/add_by_office', async (req, res) => {
     }
 
     const material = await Material.create({
+      userId,
       name,
       address,
       phone,
       detail,
-      status
+      role: 'office',
+      status: 'submitted_by_office'
     });
 
     res.status(201).json({
@@ -991,7 +1124,107 @@ app.post('/api/add_by_office', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error creating material request:', error);
+    console.error('Error creating material:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+// Bulk Delete Details Route - For deleting multiple details at once
+app.delete('/bulk-delete-details', async (req, res) => {
+  try {
+    const { ids } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Array of detail IDs is required'
+      });
+    }
+
+    // Validate all IDs are valid MongoDB ObjectIds
+    const invalidIds = ids.filter(id => !id.match(/^[0-9a-fA-F]{24}$/));
+    if (invalidIds.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ID format found in the list'
+      });
+    }
+
+    const result = await Material.deleteMany({
+      _id: { $in: ids }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully deleted ${result.deletedCount} details`,
+      deletedCount: result.deletedCount
+    });
+
+  } catch (error) {
+    console.error('Error bulk deleting details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Get Details Statistics Route - For dashboard statistics
+app.get('/details-stats', async (req, res) => {
+  try {
+    const totalDetails = await Material.countDocuments({});
+    
+    // Get details created today
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const todayDetails = await Material.countDocuments({
+      createdAt: {
+        $gte: today,
+        $lt: tomorrow
+      }
+    });
+
+    // Get details created this week
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - today.getDay());
+    
+    const weekDetails = await Material.countDocuments({
+      createdAt: {
+        $gte: weekStart,
+        $lt: tomorrow
+      }
+    });
+
+    // Get details created this month
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    
+    const monthDetails = await Material.countDocuments({
+      createdAt: {
+        $gte: monthStart,
+        $lt: tomorrow
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Statistics retrieved successfully',
+      data: {
+        total: totalDetails,
+        today: todayDetails,
+        thisWeek: weekDetails,
+        thisMonth: monthDetails
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching statistics:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',
@@ -1111,5 +1344,505 @@ async function startServer() {
     console.error('Unable to start server:', error);
   }
 }
+
+
+// 🔹 GET: Fetch all employee submissions (admin view or general list)
+app.get('/employee_details', async (req, res) => {
+  try {
+    const data = await Material.findAll({
+      where: { role: 'employee' },
+      order: [['createdAt', 'DESC']]
+    });
+
+    res.status(200).json({ success: true, data });
+  } catch (err) {
+    console.error('Error fetching employee data:', err);
+    res.status(500).json({ success: false, message: 'Error fetching employee data', error: err.message });
+  }
+});
+
+
+// 🔹 POST: Submit material from employee (userId auto-generated)
+app.post('/employee_details', upload.fields([
+  { name: 'image1' }, { name: 'image2' }, { name: 'image3' },
+  { name: 'video1' }, { name: 'video2' }, { name: 'video3' }
+]), async (req, res) => {
+  try {
+    const { name, phone, address, pincode, latitude, longitude, detail } = req.body;
+
+    if (!name || !phone || !address || !pincode || !latitude || !longitude || !detail) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields'
+      });
+    }
+
+    const userId = 'EMP-' + Math.floor(100000 + Math.random() * 900000); // auto-generate
+
+    const material = await Material.create({
+      userId,
+      role: 'employee',
+      name,
+      phone,
+      address,
+      pincode,
+      latitude,
+      longitude,
+      detail,
+      image1: req.files['image1']?.[0]?.filename || null,
+      image2: req.files['image2']?.[0]?.filename || null,
+      image3: req.files['image3']?.[0]?.filename || null,
+      video1: req.files['video1']?.[0]?.filename || null,
+      video2: req.files['video2']?.[0]?.filename || null,
+      video3: req.files['video3']?.[0]?.filename || null,
+      status: 'submitted'
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Employee material submitted successfully',
+      data: material
+    });
+
+  } catch (error) {
+    console.error('Error submitting employee material:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Backend Routes for Order Management System
+
+//order management //
+//
+//
+// ADMIN ROUTES - ORDER 
+
+app.get('/clients', async (req, res) => {
+  try {
+    const clients = await SignUp.findAll({
+      where: {
+        type: 'Client' // Make sure this matches your database values
+      },
+      attributes: ['id', 'fullname', 'email', 'phone', 'user_id'], 
+      order: [['fullname', 'ASC']]
+    });
+    
+    res.status(200).json({
+      success: true,
+      clients: clients.map(client => ({
+        id: client.id,
+        fullName: client.fullname, // Mapping to match frontend expectation
+        email: client.email,
+        phone: client.phone,
+        user_id: client.user_id
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching clients:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch clients',
+      error: error.message
+    });
+  }
+});
+
+
+
+app.post('/api/admin/orders', upload.fields([
+  { name: 'image1' }, 
+  { name: 'video1' }
+]), async (req, res) => {
+  try {
+    const {
+      name,
+      address,
+      unit,
+      quantity,
+      unitPrice,
+      vehicleName,
+      vehicleNumber,
+      pincode,
+      offer = 0,
+      status = 'active',
+      isTemplate = false,
+      description,
+      phone,
+      c_id,
+      detail
+    } = req.body;
+
+    if (!name || !unit || !unitPrice) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, unit, and unit price are required fields'
+      });
+    }
+
+    const userId= await generateOrderId();
+    const totalPrice = parseFloat(unitPrice) * (parseInt(quantity) || 1);
+    const finalPrice = totalPrice - totalPrice * (parseFloat(offer) / 100);
+
+    const newOrder = await Material.create({
+      userId,
+      name,
+      unit,
+      quantity: quantity || 1,
+      unitPrice: parseFloat(unitPrice),
+      totalPrice: finalPrice,
+      vehicleName: vehicleName || null,
+      vehicleNumber: vehicleNumber || null,
+      pincode: pincode || null,
+      offer: parseFloat(offer),
+      image1: req.files?.['image1']?.[0]?.filename || null,
+      video: req.files?.['video1']?.[0]?.filename || null,
+      status,
+      isTemplate: isTemplate === 'true' || isTemplate === true,
+      description: description || null,
+      createdBy: 'admin',
+      phone: phone || null,
+      c_id: c_id || null,
+      role:'admin',
+      detail
+    });
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Order created successfully',
+      data: newOrder 
+    });
+  } catch (error) {
+    console.error('Error creating order:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Internal server error', 
+      error: error.message 
+    });
+  }
+});
+
+function generateOrderId() {
+  // Generate a unique order ID using timestamp and random number
+  const timestamp = Date.now();
+  const randomNum = Math.floor(Math.random() * 1000);
+  return `ORDER_${timestamp}_${randomNum}`;
+}
+
+// Fixed backend routes for order management
+
+app.get('/api/admin/orders', async (req, res) => {
+  try {
+    const {
+      status,
+      sortBy = 'createdAt',
+      sortOrder = 'DESC',
+      page = 1,
+      limit = 50,
+      search,
+      clientId,
+      phone
+    } = req.query;
+
+    const whereClause = {
+      // Add this filter to only get order data (not employee/office data)
+      role: 'admin' // or whatever role you use for orders
+    };
+
+    // Filter by status
+    if (status && status !== 'all') {
+      whereClause.status = status;
+    }
+
+    // Text search
+    if (search) {
+      whereClause[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { customerName: { [Op.like]: `%${search}%` } },
+        { customerEmail: { [Op.like]: `%${search}%` } },
+        { customerPhone: { [Op.like]: `%${search}%` } },
+        { orderId: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+        { c_id: { [Op.like]: `%${search}%` } }
+      ];
+    }
+
+    // Dropdown filters
+    if (clientId) {
+      whereClause.c_id = clientId;
+    }
+
+    if (phone) {
+      whereClause.phone = phone;
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: orders } = await Material.findAndCountAll({
+      where: whereClause,
+      order: [[sortBy, sortOrder]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Orders fetched successfully',
+      data: {
+        orders,
+        pagination: {
+          total: count,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(count / limit),
+          hasNext: offset + orders.length < count,
+          hasPrev: page > 1
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Fixed PUT route - use Material instead of Order
+app.put('/api/admin/orders/:id', upload.fields([
+  { name: 'image1' },
+  { name: 'video1' }
+]), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      customerName,
+      customerEmail,
+      customerPhone,
+      address,
+      unit,
+      quantity,
+      unitPrice,
+      vehicleName,
+      vehicleNumber,
+      pincode,
+      offer = 0,
+      status,
+      isTemplate,
+      description,
+      phone,
+      c_id,
+      detail
+    } = req.body;
+
+    // Use Material model instead of Order
+    const order = await Material.findByPk(id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Fixed calculation bug - was using finalPrice instead of totalPrice
+    const totalPrice = parseFloat(unitPrice || order.unitPrice) * (parseInt(quantity || order.quantity) || 1);
+    const finalPrice = totalPrice - (totalPrice * (parseFloat(offer || order.offer) / 100));
+
+    const updatedOrder = await order.update({
+      name: name || order.name,
+      customerName: customerName || order.customerName,
+      customerEmail: customerEmail || order.customerEmail,
+      customerPhone: customerPhone || order.customerPhone,
+      address: address || order.address,
+      unit: unit || order.unit,
+      quantity: quantity || order.quantity,
+      unitPrice: parseFloat(unitPrice || order.unitPrice),
+      totalPrice: finalPrice, // Fixed this line
+      vehicleName: vehicleName || order.vehicleName,
+      vehicleNumber: vehicleNumber || order.vehicleNumber,
+      pincode: pincode || order.pincode,
+      offer: parseFloat(offer || order.offer),
+      image1: req.files?.['image1']?.[0]?.filename || order.image1,
+      video: req.files?.['video1']?.[0]?.filename || order.video,
+      status: status || order.status,
+      isTemplate: isTemplate === 'true' || isTemplate === true || order.isTemplate,
+      description: description || order.description,
+      phone: phone || order.phone,
+      c_id: c_id || order.c_id,
+      detail: detail || order.detail
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Order updated successfully',
+      data: updatedOrder
+    });
+  } catch (error) {
+    console.error('Error updating order:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Add DELETE route for orders
+app.delete('/api/admin/orders/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const order = await Material.findByPk(id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    await order.destroy();
+
+    res.status(200).json({
+      success: true,
+      message: 'Order deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting order:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Alternative approach - create separate routes for different data types
+app.get('/api/admin/orders-only', async (req, res) => {
+  try {
+    const {
+      status,
+      sortBy = 'createdAt',
+      sortOrder = 'DESC',
+      page = 1,
+      limit = 50,
+      search,
+      clientId,
+      phone
+    } = req.query;
+
+    const whereClause = {
+      // Only get records that are actual orders (not employee data)
+      [Op.and]: [
+        { role: 'admin' },
+        { createdBy: 'admin' },
+        // Add other conditions that identify this as an order
+        { 
+          [Op.or]: [
+            { name: { [Op.ne]: null } },
+            { unitPrice: { [Op.ne]: null } }
+          ]
+        }
+      ]
+    };
+
+    // Add your existing filters here...
+    if (status && status !== 'all') {
+      whereClause.status = status;
+    }
+
+    if (search) {
+      whereClause[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { customerName: { [Op.like]: `%${search}%` } },
+        { customerEmail: { [Op.like]: `%${search}%` } },
+        { customerPhone: { [Op.like]: `%${search}%` } },
+        { orderId: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+        { c_id: { [Op.like]: `%${search}%` } }
+      ];
+    }
+
+    if (clientId) {
+      whereClause.c_id = clientId;
+    }
+
+    if (phone) {
+      whereClause.phone = phone;
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: orders } = await Material.findAndCountAll({
+      where: whereClause,
+      order: [[sortBy, sortOrder]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Orders fetched successfully',
+      data: {
+        orders,
+        pagination: {
+          total: count,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(count / limit),
+          hasNext: offset + orders.length < count,
+          hasPrev: page > 1
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+
+//Admin sees bith employees data
+
+app.get('/both_employees', async (req, res) => {
+  try {
+    // Fetch all materials
+    const allData = await Material.findAll({ order: [['createdAt', 'DESC']] });
+
+    // Filter based on role
+    const fieldEmp = allData.filter(entry => entry.role === 'employee');
+    const officeEmp = allData.filter(entry => entry.role === 'office');
+
+    res.json({
+      success: true,
+      total: allData.length,
+      fieldEmpCount: fieldEmp.length,
+      officeEmpCount: officeEmp.length,
+      all: allData,
+      fieldEmp,
+      officeEmp
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching admin data',
+      error: err.message
+    });
+  }
+});
+
+
+
+
+
+
 
 startServer();

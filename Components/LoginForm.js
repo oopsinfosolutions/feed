@@ -63,7 +63,7 @@ const LoginForm = ({ navigation }) => {
     console.log('Normalized user type:', normalizedType);
     
     const navigationMap = {
-      'dealer': 'DealerScreen',
+      'dealer': 'EmployeeDataScreen',
       'client': 'CustomerScreen',
       'customer': 'CustomerScreen',
       'field_employee': 'EmployeeScreen',
@@ -111,7 +111,7 @@ const LoginForm = ({ navigation }) => {
       
       console.log('Sending login request with:', { phone: phoneToSend, password });
       
-      const response = await axios.post('http://192.168.1.15:3000/login', {
+      const response = await axios.post('http://192.168.1.42:3000/login', {
         phone: phoneToSend,
         password,
       });

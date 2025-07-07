@@ -52,7 +52,7 @@ const Users = () => {
   // Fetch users from server
   const fetchUsers = async () => {
     try {
-      const response = await axios.get('http://192.168.1.15:3000/Users');
+      const response = await axios.get('http://192.168.1.42:3000/Users');
       setUsers(response.data);
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -104,7 +104,7 @@ const Users = () => {
     };
   
     try {
-      const response = await axios.post('http://192.168.1.15:3000/signup', newUser);
+      const response = await axios.post('http://192.168.1.42:3000/signup', newUser);
       console.log('User added:', response.data);
   
       clearForm();
@@ -158,7 +158,7 @@ const Users = () => {
     }
   
     try {
-      const response = await axios.put(`http://192.168.1.15:3000/users/${editingUserId}`, updatedUser);
+      const response = await axios.put(`http://192.168.1.42:3000/users/${editingUserId}`, updatedUser);
       console.log('User updated:', response.data);
   
       clearForm();
@@ -202,7 +202,7 @@ const Users = () => {
         style: 'destructive',
         onPress: async () => {
           try {
-            await axios.delete(`http://192.168.1.15:3000/users/${userId}`);
+            await axios.delete(`http://192.168.1.42:3000/users/${userId}`);
             Alert.alert('Success', 'User deleted successfully!');
             await fetchUsers();
             // Clear form if the deleted user was being edited

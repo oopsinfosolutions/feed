@@ -1,722 +1,688 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  SafeAreaView,
-  StyleSheet,
   View,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Animated,
+  Text,
+  StyleSheet,
+  FlatList,
   TouchableOpacity,
   Alert,
+  Modal,
+  TextInput,
+  ActivityIndicator,
+  RefreshControl,
+  Image,
+  ScrollView,
+  Dimensions,
 } from 'react-native';
-import { TextInput, Button, Title, Card, Text } from 'react-native-paper';
-import axios from 'axios';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-const CustomerScreen = ({ route }) => {
-  const [tab, setTab] = useState('Material');
-  const [fadeAnim] = useState(new Animated.Value(0));
+const { width, height } = Dimensions.get('window');
 
-  // Get customer ID from route params (passed during login)
-  const customerId = route?.params?.customerId || '';
+const CustomerScreen = ({ clientId }) => {
+  const [bills, setBills] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedBill, setSelectedBill] = useState(null);
+  const [showBillDetails, setShowBillDetails] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentData, setPaymentData] = useState({
+    paymentMethod: '',
+    transactionId: '',
+    paymentNotes: '',
+  });
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [totalBills, setTotalBills] = useState(0);
+  const [processingPayment, setProcessingPayment] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('unknown');
 
-  // Material Information - Updated to match backend fields
-  const [materialName, setMaterialName] = useState('');
-  const [materialDetails, setMaterialDetails] = useState('');
-  const [quantity, setQuantity] = useState('');
+  // IMPORTANT: Update this to your actual server IP and port
+  const API_BASE_URL = 'http://192.168.1.42:3000';
 
-  // Location Details - Only drop location now
-  const [dropLocation, setDropLocation] = useState('');
-
-  // Material List Management
-  const [materials, setMaterials] = useState([]);
-  const [editIndex, setEditIndex] = useState(null);
-  const [editingId, setEditingId] = useState(null);
-
-  // Status field
-  const [status, setStatus] = useState('Pending');
-  const [user_id, setUser_id] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  // Base URL for your API
-  const API_BASE_URL = 'http://192.168.1.15:3000';
-
-  // Get user ID from AsyncStorage on component mount
-  useEffect(() => {
-    const getUserId = async () => {
-      try {
-        console.log('Attempting to get user_id from AsyncStorage...');
-        
-        // Try multiple possible keys that might be used for user ID
-        const possibleKeys = ['user_id', 'userId', 'id', 'customer_id', 'customerId'];
-        let foundUserId = null;
-        
-        for (const key of possibleKeys) {
-          const value = await AsyncStorage.getItem(key);
-          console.log(`AsyncStorage key '${key}':`, value);
-          if (value && value !== 'null' && value !== 'undefined') {
-            foundUserId = value;
-            console.log(`Found user ID with key '${key}':`, foundUserId);
-            break;
-          }
-        }
-
-        // Also check route params
-        if (!foundUserId && customerId) {
-          console.log('Using customerId from route params:', customerId);
-          foundUserId = customerId;
-        }
-
-        // Also check all items in AsyncStorage for debugging
-        console.log('All AsyncStorage keys:');
-        const allKeys = await AsyncStorage.getAllKeys();
-        console.log('Available keys:', allKeys);
-        
-        if (foundUserId) {
-          setUser_id(foundUserId);
-          console.log('Set user_id to:', foundUserId);
-        } else {
-          console.log('No user ID found in any location');
-          Alert.alert(
-            'Error', 
-            'User ID not found. Please login again.\n\nDebug info:\n' + 
-            `Route customerId: ${customerId}\n` +
-            `Available keys: ${allKeys.join(', ')}`
-          );
-        }
-      } catch (error) {
-        console.error('Error getting user ID:', error);
-        Alert.alert('Error', 'Failed to get user information. Please login again.\nError: ' + error.message);
-      }
-    };
-    getUserId();
-  }, [customerId]);
-
-  // Debug useEffect to monitor user_id changes
-  useEffect(() => {
-    console.log('user_id state changed to:', user_id);
-  }, [user_id]);
-
-  // Animate tab changes
-  useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [tab]);
-
-  // Load shipments when user_id is available
-  useEffect(() => {
-    if (user_id) {
-      console.log('Loading shipments for user_id:', user_id);
-      loadShipments(user_id);
-    }
-  }, [user_id]);
-
-  const loadShipments = async (userId = user_id) => {
-    if (!userId) {
-      console.log('No user ID available for loading shipments');
-      return;
-    }
-
+  // Enhanced test server connection
+  const testConnection = async () => {
     try {
-      setLoading(true);
-      console.log('Loading shipments for user:', userId);
+      console.log('Testing connection to:', `${API_BASE_URL}/api/test`);
       
-      // Try multiple API endpoints to fetch shipments
-      let response;
-      let shipments = [];
-      
-      // First try the user-specific endpoint
-      try {
-        console.log('Trying user-specific endpoint:', `${API_BASE_URL}/shipment/user?user_id=${userId}`);
-        response = await axios.get(`${API_BASE_URL}/shipment/user`, {
-          params: { user_id: userId },
-        });
-        shipments = response.data || [];
-        console.log('User-specific shipments response:', shipments);
-      } catch (userError) {
-        console.log('User-specific endpoint failed:', userError.message);
-        
-        // Try alternative endpoint with customer ID
-        try {
-          console.log('Trying customer-specific endpoint:', `${API_BASE_URL}/shipments/customer/${userId}`);
-          response = await axios.get(`${API_BASE_URL}/shipments/customer/${userId}`);
-          shipments = response.data || [];
-          console.log('Customer-specific shipments response:', shipments);
-        } catch (customerError) {
-          console.log('Customer-specific endpoint failed:', customerError.message);
-          
-          // Try getting all shipments and filter by user
-          try {
-            console.log('Trying all shipments endpoint:', `${API_BASE_URL}/shipments`);
-            response = await axios.get(`${API_BASE_URL}/shipments`);
-            const allShipments = response.data || [];
-            console.log('All shipments response:', allShipments);
-            
-            // Filter shipments by user ID (check multiple possible field names)
-            shipments = allShipments.filter(shipment => 
-              shipment.c_id == userId || 
-              shipment.user_id == userId || 
-              shipment.customer_id == userId ||
-              shipment.customerId == userId
-            );
-            console.log('Filtered shipments for user:', shipments);
-          } catch (allError) {
-            console.log('All shipments endpoint failed:', allError.message);
-            
-            // Last resort: try a generic GET with different parameter names
-            try {
-              console.log('Trying with c_id parameter:', `${API_BASE_URL}/shipment/user?c_id=${userId}`);
-              response = await axios.get(`${API_BASE_URL}/shipment/user`, {
-                params: { c_id: userId },
-              });
-              shipments = response.data || [];
-              console.log('c_id parameter shipments response:', shipments);
-            } catch (finalError) {
-              throw finalError;
-            }
-          }
-        }
-      }
-      
-      console.log('Final shipments data:', shipments);
-      setMaterials(shipments);
-      
-      if (shipments.length === 0) {
-        console.log('No shipments found for user ID:', userId);
-      }
-      
-    } catch (error) {
-      console.error('Error loading shipments:', error);
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-        console.error('Error status:', error.response.status);
-        Alert.alert('Error', `Failed to load shipments: ${error.response.data.message || error.response.data.error || 'Unknown error'}\n\nStatus: ${error.response.status}`);
-      } else if (error.request) {
-        console.error('No response received:', error.request);
-        Alert.alert('Error', 'No response from server. Please check your internet connection and server status.');
-      } else {
-        console.error('Request setup error:', error.message);
-        Alert.alert('Error', 'Failed to load shipments. Please check your internet connection.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddOrUpdateMaterial = async () => {
-    console.log('=== DEBUG INFO ===');
-    console.log('user_id state:', user_id);
-    console.log('customerId from route:', customerId);
-    console.log('materialName:', materialName);
-    console.log('materialDetails:', materialDetails);
-    console.log('quantity:', quantity);
-    console.log('=================');
-
-    // Updated validation - removed price per unit validation
-    if (!materialName || !materialDetails || !quantity) {
-      Alert.alert('Validation Error', 'Please fill all required fields: Material Name, Details, and Quantity.');
-      return;
-    }
-
-    // Check for user_id with more detailed error message
-    if (!user_id || user_id === '' || user_id === 'null' || user_id === 'undefined') {
-      console.error('User ID validation failed. Current user_id:', user_id);
-      
-      // Try to get fresh user_id from AsyncStorage
-      try {
-        const freshUserId = await AsyncStorage.getItem('user_id');
-        console.log('Fresh user_id from AsyncStorage:', freshUserId);
-        
-        if (freshUserId && freshUserId !== 'null' && freshUserId !== 'undefined') {
-          setUser_id(freshUserId);
-          Alert.alert('Info', 'User ID recovered. Please try again.');
-          return;
-        }
-      } catch (error) {
-        console.error('Error getting fresh user_id:', error);
-      }
-
-      Alert.alert(
-        'Authentication Error', 
-        `User ID is required but not found.\n\n` +
-        `Debug info:\n` +
-        `- user_id state: "${user_id}"\n` +
-        `- customerId from route: "${customerId}"\n` +
-        `- Please login again to continue.`
-      );
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const formData = new FormData();
-
-      // Add form fields matching backend expectations - removed price_per_unit
-      formData.append('material_Name', materialName);
-      formData.append('detail', materialDetails);
-      formData.append('quantity', quantity);
-      formData.append('drop_location', dropLocation || '');
-      formData.append('c_id', user_id); // Use user_id instead of customerId
-      formData.append('status', status);
-
-      console.log('Sending c_id:', user_id);
-
-      let response;
-      if (editingId) {
-        // Update existing shipment
-        response = await axios.put(`${API_BASE_URL}/update-shipment/${editingId}`, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
-        Alert.alert('Success', 'Shipment updated successfully!');
-      } else {
-        // Add new shipment
-        response = await axios.post(`${API_BASE_URL}/add_shipment`, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
-        Alert.alert('Success', 'Shipment added successfully!');
-      }
-
-      // Reload shipments and reset form
-      await loadShipments(user_id);
-      resetForm();
-      setTab('Materials');
-    } catch (error) {
-      console.error('Error submitting shipment:', error);
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-        Alert.alert('Error', error.response?.data?.error || error.response?.data?.message || 'Failed to submit shipment. Please try again.');
-      } else {
-        Alert.alert('Error', 'Failed to submit shipment. Please check your internet connection.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resetForm = () => {
-    setMaterialName('');
-    setMaterialDetails('');
-    setQuantity('');
-    setDropLocation('');
-    setStatus('Pending');
-    setEditIndex(null);
-    setEditingId(null);
-  };
-
-  const handleRemoveMaterial = (shipment) => {
-    Alert.alert(
-      'Confirm Delete',
-      'Are you sure you want to remove this shipment?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              await axios.delete(`${API_BASE_URL}/delete-shipment/${shipment.id}`);
-              Alert.alert('Success', 'Shipment deleted successfully');
-              await loadShipments(user_id);
-            } catch (error) {
-              console.error('Error deleting shipment:', error);
-              Alert.alert('Error', 'Failed to delete shipment');
-            } finally {
-              setLoading(false);
-            }
-          },
+      const response = await fetch(`${API_BASE_URL}/api/test`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      ]
-    );
+        timeout: 5000, // 5 second timeout
+      });
+
+      console.log('Test response status:', response.status);
+      console.log('Test response headers:', response.headers);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const textResponse = await response.text();
+        console.log('Non-JSON test response:', textResponse);
+        throw new Error('Server returned non-JSON response');
+      }
+
+      const data = await response.json();
+      console.log('Test server response:', data);
+      setConnectionStatus('connected');
+      return true;
+    } catch (error) {
+      console.error('Server connection test failed:', error);
+      setConnectionStatus('failed');
+      
+      let errorMessage = 'Connection failed. Please check:\n';
+      if (error.message.includes('Network request failed')) {
+        errorMessage += '• Network connection\n• Server is running\n• IP address is correct';
+      } else if (error.message.includes('timeout')) {
+        errorMessage += '• Server response time\n• Network latency';
+      } else if (error.message.includes('non-JSON')) {
+        errorMessage += '• Server is returning HTML instead of JSON\n• Check if the route exists';
+      } else {
+        errorMessage += `• Error: ${error.message}`;
+      }
+      
+      Alert.alert('Connection Error', errorMessage);
+      return false;
+    }
   };
 
-  const handleEditMaterial = (shipment, index) => {
-    setMaterialName(shipment.material_Name || '');
-    setMaterialDetails(shipment.detail || '');
-    setQuantity(shipment.quantity?.toString() || '');
-    setDropLocation(shipment.drop_location || '');
-    setStatus(shipment.status || 'Pending');
-    
-    setEditIndex(index);
-    setEditingId(shipment.id);
-    setTab('Material');
+  // Enhanced fetchBills function with better error handling
+  const fetchBills = useCallback(async (page = 1, status = 'all', refresh = false) => {
+    try {
+      if (refresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      // Test connection first
+      const isConnected = await testConnection();
+      if (!isConnected) {
+        return;
+      }
+
+      const queryParams = new URLSearchParams({
+        page: page.toString(),
+        limit: '20',
+        sortBy: 'createdAt',
+        sortOrder: 'DESC',
+      });
+
+      if (status !== 'all') {
+        queryParams.append('status', status);
+      }
+
+      const url = `${API_BASE_URL}/api/client/bills/${clientId}?${queryParams}`;
+      console.log('Fetching bills from:', url);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 10000, // 10 second timeout
+      });
+
+      console.log('Bills response status:', response.status);
+      console.log('Bills response headers:', response.headers);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Bills error response:', errorText);
+        
+        if (response.status === 404) {
+          throw new Error('Bills endpoint not found. Please check server routes.');
+        } else if (response.status === 500) {
+          throw new Error('Server error. Check server logs for details.');
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const textResponse = await response.text();
+        console.error('Non-JSON bills response:', textResponse);
+        throw new Error('Server returned HTML instead of JSON. Check if the route exists.');
+      }
+
+      const data = await response.json();
+      console.log('Bills API Response:', data);
+
+      if (data.success) {
+        if (page === 1) {
+          setBills(data.data.bills || []);
+        } else {
+          setBills(prev => [...prev, ...(data.data.bills || [])]);
+        }
+        setHasNextPage(data.data.pagination?.hasNext || false);
+        setTotalBills(data.data.pagination?.total || 0);
+        setConnectionStatus('connected');
+      } else {
+        throw new Error(data.message || 'Failed to fetch bills');
+      }
+    } catch (error) {
+      console.error('Error fetching bills:', error);
+      setConnectionStatus('failed');
+      
+      let errorMessage = 'Failed to fetch bills:\n';
+      if (error.message.includes('Network request failed')) {
+        errorMessage += 'Network connection failed';
+      } else if (error.message.includes('timeout')) {
+        errorMessage += 'Request timed out';
+      } else if (error.message.includes('HTML instead of JSON')) {
+        errorMessage += 'Server configuration issue';
+      } else {
+        errorMessage += error.message;
+      }
+      
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [clientId, API_BASE_URL]);
+
+  // Enhanced fetchBillDetails function
+  const fetchBillDetails = async (billId) => {
+    try {
+      const url = `${API_BASE_URL}/api/client/bill/${billId}?clientId=${clientId}`;
+      console.log('Fetching bill details from:', url);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 10000,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Bill details error response:', errorText);
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const textResponse = await response.text();
+        console.error('Non-JSON bill details response:', textResponse);
+        throw new Error('Server returned HTML instead of JSON');
+      }
+
+      const data = await response.json();
+      console.log('Bill details response:', data);
+
+      if (data.success) {
+        setSelectedBill(data.data);
+        setShowBillDetails(true);
+      } else {
+        throw new Error(data.message || 'Failed to fetch bill details');
+      }
+    } catch (error) {
+      console.error('Error fetching bill details:', error);
+      Alert.alert('Error', `Failed to fetch bill details: ${error.message}`);
+    }
   };
 
-  // Add a debug function to test different API endpoints
-  const testAPIEndpoints = async () => {
-    if (!user_id) {
-      Alert.alert('Error', 'No user ID available for testing');
+  // Enhanced markPaymentComplete function
+  const markPaymentComplete = async () => {
+    if (!paymentData.paymentMethod.trim()) {
+      Alert.alert('Error', 'Please enter payment method');
       return;
     }
 
-    const endpoints = [
-      `${API_BASE_URL}/shipment/user?user_id=${user_id}`,
-      `${API_BASE_URL}/shipments/customer/${user_id}`,
-      `${API_BASE_URL}/shipments`,
-      `${API_BASE_URL}/shipment/user?c_id=${user_id}`,
-      `${API_BASE_URL}/api/shipments/user/${user_id}`,
-      `${API_BASE_URL}/getAllShipments`,
-    ];
+    setProcessingPayment(true);
 
-    let results = [];
-    
-    for (let endpoint of endpoints) {
-      try {
-        console.log(`Testing endpoint: ${endpoint}`);
-        const response = await axios.get(endpoint);
-        results.push(`✅ ${endpoint}: ${response.status} - ${Array.isArray(response.data) ? response.data.length : 'Non-array'} items`);
-      } catch (error) {
-        results.push(`❌ ${endpoint}: ${error.response?.status || 'No response'} - ${error.message}`);
-      }
-    }
-
-    Alert.alert('API Test Results', results.join('\n\n'));
-  };
-
-  // Add a debug button to check AsyncStorage (remove in production)
-  const debugAsyncStorage = async () => {
     try {
-      const allKeys = await AsyncStorage.getAllKeys();
-      const allItems = await AsyncStorage.multiGet(allKeys);
-      console.log('=== AsyncStorage Debug ===');
-      allItems.forEach(([key, value]) => {
-        console.log(`${key}: ${value}`);
+      const url = `${API_BASE_URL}/api/client/bill/${selectedBill.id}/payment`;
+      console.log('Updating payment status at:', url);
+
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          clientId: clientId,
+          ...paymentData,
+        }),
+        timeout: 10000,
       });
-      console.log('========================');
-      
-      Alert.alert(
-        'AsyncStorage Debug',
-        allItems.map(([key, value]) => `${key}: ${value}`).join('\n')
-      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Payment update error response:', errorText);
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const textResponse = await response.text();
+        console.error('Non-JSON payment response:', textResponse);
+        throw new Error('Server returned HTML instead of JSON');
+      }
+
+      const data = await response.json();
+      console.log('Payment update response:', data);
+
+      if (data.success) {
+        Alert.alert('Success', 'Payment marked as complete successfully');
+        setShowPaymentModal(false);
+        setShowBillDetails(false);
+        setPaymentData({
+          paymentMethod: '',
+          transactionId: '',
+          paymentNotes: '',
+        });
+        // Refresh bills list
+        fetchBills(1, statusFilter, true);
+      } else {
+        throw new Error(data.message || 'Failed to update payment status');
+      }
     } catch (error) {
-      console.error('Debug error:', error);
+      console.error('Error updating payment:', error);
+      Alert.alert('Error', `Failed to update payment status: ${error.message}`);
+    } finally {
+      setProcessingPayment(false);
     }
   };
 
-  const renderMaterialForm = () => (
-    <Animated.View style={{ opacity: fadeAnim, flex: 1 }}>
-      <ScrollView 
-        contentContainerStyle={{ paddingBottom: 30 }}
-        showsVerticalScrollIndicator={false}
+  // Load more bills (pagination)
+  const loadMoreBills = () => {
+    if (hasNextPage && !loading) {
+      const nextPage = currentPage + 1;
+      setCurrentPage(nextPage);
+      fetchBills(nextPage, statusFilter);
+    }
+  };
+
+  // Handle status filter change
+  const handleStatusFilterChange = (status) => {
+    setStatusFilter(status);
+    setCurrentPage(1);
+    fetchBills(1, status);
+  };
+
+  // Format date
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  // Format currency
+  const formatCurrency = (amount) => {
+    return `₹${parseFloat(amount).toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  };
+
+  // Get status color
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'payment_pending':
+        return '#ff6b6b';
+      case 'complete':
+        return '#51cf66';
+      default:
+        return '#868e96';
+    }
+  };
+
+  // Get status text
+  const getStatusText = (status) => {
+    switch (status) {
+      case 'payment_pending':
+        return 'Payment Pending';
+      case 'complete':
+        return 'Completed';
+      default:
+        return status;
+    }
+  };
+
+  // Enhanced debug component
+  const DebugInfo = () => (
+    <View style={styles.debugInfo}>
+      <Text style={styles.debugText}>Client ID: {clientId}</Text>
+      <Text style={styles.debugText}>API URL: {API_BASE_URL}</Text>
+      <Text style={styles.debugText}>Connection: {connectionStatus}</Text>
+      <Text style={styles.debugText}>Bills Count: {bills.length}</Text>
+      <Text style={styles.debugText}>Current Page: {currentPage}</Text>
+      <Text style={styles.debugText}>Has Next Page: {hasNextPage ? 'Yes' : 'No'}</Text>
+      <TouchableOpacity 
+        style={styles.testButton}
+        onPress={() => testConnection()}
       >
-        {/* Debug Info Card - Remove in production */}
-        <Card style={[styles.modernCard, { backgroundColor: '#FEF3E2' }]}>
-          <Card.Content>
-            <Text style={{ fontSize: 12, color: '#92400E' }}>
-              Debug: user_id = "{user_id}" | customerId = "{customerId}"
-            </Text>
-            <View style={{ flexDirection: 'row', marginTop: 5, gap: 10 }}>
-              <TouchableOpacity onPress={debugAsyncStorage}>
-                <Text style={{ fontSize: 12, color: '#3B82F6', textDecorationLine: 'underline' }}>
-                  Debug AsyncStorage
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={testAPIEndpoints}>
-                <Text style={{ fontSize: 12, color: '#DC2626', textDecorationLine: 'underline' }}>
-                  Test API Endpoints
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </Card.Content>
-        </Card>
-
-        {/* Material Information Section */}
-        <Card style={styles.modernCard}>
-          <View style={styles.cardHeader}>
-            <Title style={styles.cardTitle}>
-              {editingId ? '✏️ Edit Shipment' : '📦 Material Information'}
-            </Title>
-          </View>
-
-          <Card.Content style={styles.cardContent}>
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Material Name *"
-                mode="outlined"
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                left={<TextInput.Icon icon="cube-outline" color="#FB923C" />}
-                value={materialName}
-                onChangeText={setMaterialName}
-                theme={{ colors: { primary: '#FB923C' } }}
-                disabled={loading}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Material Details *"
-                mode="outlined"
-                multiline
-                numberOfLines={3}
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                left={<TextInput.Icon icon="information-outline" color="#FB923C" />}
-                value={materialDetails}
-                onChangeText={setMaterialDetails}
-                theme={{ colors: { primary: '#FB923C' } }}
-                disabled={loading}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Quantity *"
-                mode="outlined"
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                keyboardType="numeric"
-                left={<TextInput.Icon icon="counter" color="#FB923C" />}
-                value={quantity}
-                onChangeText={setQuantity}
-                theme={{ colors: { primary: '#FB923C' } }}
-                disabled={loading}
-              />
-            </View>
-          </Card.Content>
-        </Card>
-
-        {/* Location Details Section */}
-        <Card style={styles.modernCard}>
-          <View style={styles.cardHeader}>
-            <Title style={styles.cardTitle}>📍 Location Details</Title>
-          </View>
-
-          <Card.Content style={styles.cardContent}>
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Drop Location"
-                mode="outlined"
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                left={<TextInput.Icon icon="map-marker-down" color="#FB923C" />}
-                value={dropLocation}
-                onChangeText={setDropLocation}
-                theme={{ colors: { primary: '#FB923C' } }}
-                disabled={loading}
-              />
-            </View>
-          </Card.Content>
-        </Card>
-
-        {/* Submit Button */}
-        <TouchableOpacity 
-          style={[styles.modernButton, loading && styles.disabledButton]} 
-          onPress={handleAddOrUpdateMaterial}
-          activeOpacity={0.8}
-          disabled={loading}
-        >
-          <View style={styles.buttonContainer}>
-            <Text style={styles.buttonText}>
-              {loading ? '⏳ Processing...' : (editingId ? '✅ Update Shipment' : '➕ Add Shipment')}
-            </Text>
-          </View>
-        </TouchableOpacity>
-
-        {editingId && (
-          <TouchableOpacity
-            style={[styles.cancelButton, loading && styles.disabledButton]}
-            onPress={() => {
-              if (!loading) {
-                resetForm();
-                setTab('Materials');
-              }
-            }}
-            activeOpacity={0.7}
-            disabled={loading}
-          >
-            <Text style={styles.cancelButtonText}>Cancel Edit</Text>
-          </TouchableOpacity>
-        )}
-      </ScrollView>
-    </Animated.View>
+        <Text style={styles.testButtonText}>Test Connection</Text>
+      </TouchableOpacity>
+      <TouchableOpacity 
+        style={[styles.testButton, { backgroundColor: '#28a745' }]}
+        onPress={() => fetchBills(1, statusFilter, true)}
+      >
+        <Text style={styles.testButtonText}>Force Refresh</Text>
+      </TouchableOpacity>
+    </View>
   );
 
-  const renderMaterialsList = () => (
-    <Animated.View style={{ opacity: fadeAnim, flex: 1 }}>
-      <Card style={styles.modernCard}>
-        <View style={styles.cardHeader}>
-          <Title style={styles.cardTitle}>📋 My Shipments</Title>
-          <TouchableOpacity
-            style={[styles.refreshButton, loading && styles.disabledButton]}
-            onPress={() => !loading && loadShipments(user_id)}
-            activeOpacity={0.7}
-            disabled={loading}
-          >
-            <Text style={styles.refreshButtonText}>
-              {loading ? '⏳' : '🔄'} Refresh
-            </Text>
+  // Bill item component
+  const BillItem = ({ item }) => (
+    <TouchableOpacity
+      style={styles.billItem}
+      onPress={() => fetchBillDetails(item.id)}
+    >
+      <View style={styles.billHeader}>
+        <Text style={styles.billNumber}>{item.billNumber}</Text>
+        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
+          <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
+        </View>
+      </View>
+      
+      <View style={styles.billContent}>
+        <Text style={styles.billAmount}>{formatCurrency(item.amount)}</Text>
+        <Text style={styles.billDate}>Sent: {formatDate(item.sentAt)}</Text>
+        {item.dueDate && (
+          <Text style={styles.dueDate}>Due: {formatDate(item.dueDate)}</Text>
+        )}
+        {item.order && (
+          <Text style={styles.orderName}>{item.order.name}</Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+
+  // Filter buttons component
+  const FilterButtons = () => (
+    <View style={styles.filterContainer}>
+      <TouchableOpacity
+        style={[styles.filterButton, statusFilter === 'all' && styles.activeFilter]}
+        onPress={() => handleStatusFilterChange('all')}
+      >
+        <Text style={[styles.filterText, statusFilter === 'all' && styles.activeFilterText]}>
+          All
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.filterButton, statusFilter === 'payment_pending' && styles.activeFilter]}
+        onPress={() => handleStatusFilterChange('payment_pending')}
+      >
+        <Text style={[styles.filterText, statusFilter === 'payment_pending' && styles.activeFilterText]}>
+          Pending
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.filterButton, statusFilter === 'complete' && styles.activeFilter]}
+        onPress={() => handleStatusFilterChange('complete')}
+      >
+        <Text style={[styles.filterText, statusFilter === 'complete' && styles.activeFilterText]}>
+          Completed
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  // Bill details modal
+  const BillDetailsModal = () => (
+    <Modal
+      visible={showBillDetails}
+      animationType="slide"
+      presentationStyle="pageSheet"
+    >
+      <SafeAreaView style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Bill Details</Text>
+          <TouchableOpacity onPress={() => setShowBillDetails(false)}>
+            <Text style={styles.closeButton}>Close</Text>
           </TouchableOpacity>
         </View>
         
-        <Card.Content style={styles.cardContent}>
-          {!user_id ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateIcon}>⚠️</Text>
-              <Text style={styles.emptyStateTitle}>No User ID</Text>
-              <Text style={styles.emptyStateSubtitle}>
-                Please login to view your shipments
-              </Text>
+        {selectedBill && (
+          <ScrollView style={styles.modalContent}>
+            <View style={styles.billDetailCard}>
+              <Text style={styles.billDetailNumber}>{selectedBill.billNumber}</Text>
+              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedBill.status) }]}>
+                <Text style={styles.statusText}>{getStatusText(selectedBill.status)}</Text>
+              </View>
             </View>
-          ) : loading ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateIcon}>⏳</Text>
-              <Text style={styles.emptyStateTitle}>Loading...</Text>
-              <Text style={styles.emptyStateSubtitle}>
-                Fetching your shipments
-              </Text>
+            
+            <View style={styles.detailSection}>
+              <Text style={styles.sectionTitle}>Amount</Text>
+              <Text style={styles.amountText}>{formatCurrency(selectedBill.amount)}</Text>
             </View>
-          ) : materials.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateIcon}>📦</Text>
-              <Text style={styles.emptyStateTitle}>No shipments found</Text>
-              <Text style={styles.emptyStateSubtitle}>
-                Add your first shipment to get started{'\n'}
-                {user_id ? `User ID: ${user_id}` : 'No user ID available'}
-              </Text>
+            
+            <View style={styles.detailSection}>
+              <Text style={styles.sectionTitle}>Dates</Text>
+              <Text style={styles.detailText}>Sent: {formatDate(selectedBill.sentAt)}</Text>
+              {selectedBill.dueDate && (
+                <Text style={styles.detailText}>Due: {formatDate(selectedBill.dueDate)}</Text>
+              )}
+              {selectedBill.paidAt && (
+                <Text style={styles.detailText}>Paid: {formatDate(selectedBill.paidAt)}</Text>
+              )}
             </View>
-          ) : (
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {materials.map((material, index) => (
-                <Card key={material.id || index} style={styles.materialCard}>
-                  <Card.Content style={styles.materialCardContent}>
-                    <View style={styles.materialHeader}>
-                      <Text style={styles.materialName}>{material.material_Name}</Text>
-                      <View style={styles.materialActions}>
-                        <TouchableOpacity
-                          style={[styles.editButton, loading && styles.disabledButton]}
-                          onPress={() => !loading && handleEditMaterial(material, index)}
-                          disabled={loading}
-                        >
-                          <Text style={styles.editButtonText}>✏️ Edit</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.deleteButton, loading && styles.disabledButton]}
-                          onPress={() => !loading && handleRemoveMaterial(material)}
-                          disabled={loading}
-                        >
-                          <Text style={styles.deleteButtonText}>🗑️ Delete</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                    
-                    <View style={styles.materialDetails}>
-                      <Text style={styles.materialDetailText}>
-                        Quantity: {material.quantity}
-                      </Text>
-                      <Text style={styles.materialDetailText}>
-                        Status: {material.status || 'Pending'}
-                      </Text>
-                      <Text style={styles.materialDetailText}>
-                        Details: {material.detail}
-                      </Text>
-                    </View>
-
-                    {material.drop_location && (
-                      <View style={styles.materialLocations}>
-                        <Text style={styles.locationText}>
-                          📍 Drop Location: {material.drop_location}
-                        </Text>
-                      </View>
-                    )}
-                  </Card.Content>
-                </Card>
-              ))}
-            </ScrollView>
-          )}
-        </Card.Content>
-      </Card>
-    </Animated.View>
+            
+            {selectedBill.order && (
+              <View style={styles.detailSection}>
+                <Text style={styles.sectionTitle}>Order Details</Text>
+                <Text style={styles.detailText}>Item: {selectedBill.order.name}</Text>
+                <Text style={styles.detailText}>
+                  Quantity: {selectedBill.order.quantity} {selectedBill.order.unit}
+                </Text>
+                <Text style={styles.detailText}>
+                  Unit Price: {formatCurrency(selectedBill.order.unitPrice)}
+                </Text>
+                {selectedBill.order.description && (
+                  <Text style={styles.detailText}>Description: {selectedBill.order.description}</Text>
+                )}
+                {selectedBill.order.vehicleName && (
+                  <Text style={styles.detailText}>Vehicle: {selectedBill.order.vehicleName}</Text>
+                )}
+                {selectedBill.order.vehicleNumber && (
+                  <Text style={styles.detailText}>Vehicle Number: {selectedBill.order.vehicleNumber}</Text>
+                )}
+              </View>
+            )}
+            
+            {selectedBill.additionalNotes && (
+              <View style={styles.detailSection}>
+                <Text style={styles.sectionTitle}>Additional Notes</Text>
+                <Text style={styles.detailText}>{selectedBill.additionalNotes}</Text>
+              </View>
+            )}
+            
+            {selectedBill.paymentMethod && (
+              <View style={styles.detailSection}>
+                <Text style={styles.sectionTitle}>Payment Information</Text>
+                <Text style={styles.detailText}>Method: {selectedBill.paymentMethod}</Text>
+                {selectedBill.transactionId && (
+                  <Text style={styles.detailText}>Transaction ID: {selectedBill.transactionId}</Text>
+                )}
+                {selectedBill.paymentNotes && (
+                  <Text style={styles.detailText}>Notes: {selectedBill.paymentNotes}</Text>
+                )}
+              </View>
+            )}
+            
+            {selectedBill.order?.image1 && (
+              <View style={styles.detailSection}>
+                <Text style={styles.sectionTitle}>Images</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {selectedBill.order.image1 && (
+                    <Image
+                      source={{ uri: `${API_BASE_URL}${selectedBill.order.image1}` }}
+                      style={styles.orderImage}
+                    />
+                  )}
+                  {selectedBill.order.image2 && (
+                    <Image
+                      source={{ uri: `${API_BASE_URL}${selectedBill.order.image2}` }}
+                      style={styles.orderImage}
+                    />
+                  )}
+                  {selectedBill.order.image3 && (
+                    <Image
+                      source={{ uri: `${API_BASE_URL}${selectedBill.order.image3}` }}
+                      style={styles.orderImage}
+                    />
+                  )}
+                </ScrollView>
+              </View>
+            )}
+            
+            {selectedBill.status === 'payment_pending' && (
+              <TouchableOpacity
+                style={styles.paymentButton}
+                onPress={() => setShowPaymentModal(true)}
+              >
+                <Text style={styles.paymentButtonText}>Mark as Paid</Text>
+              </TouchableOpacity>
+            )}
+          </ScrollView>
+        )}
+      </SafeAreaView>
+    </Modal>
   );
 
+  // Payment modal
+  const PaymentModal = () => (
+    <Modal
+      visible={showPaymentModal}
+      animationType="slide"
+      transparent={true}
+    >
+      <View style={styles.paymentModalOverlay}>
+        <View style={styles.paymentModalContent}>
+          <Text style={styles.paymentModalTitle}>Mark Payment as Complete</Text>
+          
+          <TextInput
+            style={styles.paymentInput}
+            placeholder="Payment Method (e.g., Cash, UPI, Bank Transfer)"
+            value={paymentData.paymentMethod}
+            onChangeText={(text) => setPaymentData({...paymentData, paymentMethod: text})}
+          />
+          
+          <TextInput
+            style={styles.paymentInput}
+            placeholder="Transaction ID (optional)"
+            value={paymentData.transactionId}
+            onChangeText={(text) => setPaymentData({...paymentData, transactionId: text})}
+          />
+          
+          <TextInput
+            style={[styles.paymentInput, styles.paymentNotesInput]}
+            placeholder="Payment Notes (optional)"
+            value={paymentData.paymentNotes}
+            onChangeText={(text) => setPaymentData({...paymentData, paymentNotes: text})}
+            multiline
+            numberOfLines={3}
+          />
+          
+          <View style={styles.paymentModalButtons}>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => setShowPaymentModal(false)}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.confirmButton}
+              onPress={markPaymentComplete}
+              disabled={processingPayment}
+            >
+              {processingPayment ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Text style={styles.confirmButtonText}>Confirm Payment</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // Initial load
+  useEffect(() => {
+    // Add a small delay to ensure component is mounted
+    const timer = setTimeout(() => {
+      fetchBills(1, statusFilter);
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [statusFilter]);
+
+  // Main render
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.backgroundContainer}>
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[
-              styles.modernTab,
-              tab === 'Material' && styles.activeModernTab
-            ]}
-            onPress={() => {
-              if (!loading) {
-                setTab('Material');
-                fadeAnim.setValue(0);
-                Animated.timing(fadeAnim, {
-                  toValue: 1,
-                  duration: 300,
-                  useNativeDriver: true,
-                }).start();
-              }
-            }}
-            activeOpacity={0.8}
-            disabled={loading}
-          >
-            <View style={[
-              styles.tabContent,
-              tab === 'Material' && styles.activeTabContent
-            ]}>
-              <Text style={[
-                styles.tabText,
-                tab === 'Material' && styles.activeTabText
-              ]}>
-                📦 Shipment
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.modernTab,
-              tab === 'Materials' && styles.activeModernTab
-            ]}
-            onPress={() => {
-              if (!loading) {
-                setTab('Materials');
-                fadeAnim.setValue(0);
-                Animated.timing(fadeAnim, {
-                  toValue: 1,
-                  duration: 300,
-                  useNativeDriver: true,
-                }).start();
-              }
-            }}
-            activeOpacity={0.8}
-            disabled={loading}
-          >
-            <View style={[
-              styles.tabContent,
-              tab === 'Materials' && styles.activeTabContent
-            ]}>
-              <Text style={[
-                styles.tabText,
-                tab === 'Materials' && styles.activeTabText
-              ]}>
-                📋 My Shipments
-              </Text>
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        <KeyboardAvoidingView 
-          style={{ flex: 1 }} 
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          {tab === 'Material' ? renderMaterialForm() : renderMaterialsList()}
-        </KeyboardAvoidingView>
+      <View style={styles.header}>
+        <Text style={styles.title}>My Bills</Text>
+        <Text style={styles.subtitle}>Total: {totalBills}</Text>
       </View>
+      
+      <DebugInfo />
+      
+      <FilterButtons />
+      
+      {loading && bills.length === 0 ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading bills...</Text>
+          <Text style={styles.loadingSubtext}>Connection: {connectionStatus}</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={bills}
+          renderItem={({ item }) => <BillItem item={item} />}
+          keyExtractor={(item) => item.id.toString()}
+          contentContainerStyle={styles.listContainer}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchBills(1, statusFilter, true)}
+            />
+          }
+          onEndReached={loadMoreBills}
+          onEndReachedThreshold={0.1}
+          ListFooterComponent={
+            hasNextPage && !loading ? (
+              <View style={styles.loadingFooter}>
+                <ActivityIndicator size="small" color="#007AFF" />
+                <Text style={styles.loadingFooterText}>Loading more...</Text>
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            !loading ? (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>No bills found</Text>
+                <Text style={styles.emptySubtext}>
+                  {statusFilter === 'all' 
+                    ? 'You don\'t have any bills yet' 
+                    : `No ${statusFilter === 'payment_pending' ? 'pending' : 'completed'} bills found`}
+                </Text>
+                <Text style={styles.emptySubtext}>Connection: {connectionStatus}</Text>
+              </View>
+            ) : null
+          }
+        />
+      )}
+      
+      <BillDetailsModal />
+      <PaymentModal />
     </SafeAreaView>
   );
 };
@@ -724,276 +690,317 @@ const CustomerScreen = ({ route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFF7ED',
+    backgroundColor: '#f5f5f5',
   },
-  backgroundContainer: {
-    flex: 1,
-    backgroundColor: '#FEF3E2',
-    padding: 16,
+  header: {
+    backgroundColor: '#ffffff',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
-  tabContainer: {
-    flexDirection: 'row',
-    marginBottom: 20,
-    backgroundColor: 'white',
-    borderRadius: 25,
-    padding: 4,
-    shadowColor: '#FB923C',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-    borderWidth: 1,
-    borderColor: '#FDBA74',
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333333',
   },
-  modernTab: {
-    flex: 1,
-    borderRadius: 21,
-    overflow: 'hidden',
-  },
-  tabContent: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 21,
-  },
-  activeTabContent: {
-    backgroundColor: '#FB923C',
-  },
-  tabText: {
+  subtitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#A16207',
+    color: '#666666',
+    marginTop: 4,
   },
-  activeTabText: {
-    color: 'white',
-    fontWeight: '700',
-  },
-  modernCard: {
-    backgroundColor: 'white',
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#FB923C',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 8,
-    marginBottom: 20,
+  debugInfo: {
+    backgroundColor: '#fff3cd',
+    padding: 10,
+    margin: 10,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#FDBA74',
+    borderColor: '#ffeaa7',
   },
-  cardHeader: {
-    backgroundColor: '#FB923C',
-    paddingVertical: 20,
-    paddingHorizontal: 24,
+  debugText: {
+    fontSize: 12,
+    color: '#856404',
+    marginBottom: 2,
+  },
+  testButton: {
+    backgroundColor: '#007AFF',
+    padding: 8,
+    borderRadius: 6,
+    marginTop: 5,
+    marginBottom: 2,
     alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
   },
-  cardTitle: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: '700',
-    textAlign: 'center',
-    flex: 1,
-  },
-  refreshButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  refreshButtonText: {
-    color: 'white',
+  testButtonText: {
+    color: '#ffffff',
     fontSize: 12,
     fontWeight: '600',
   },
-  cardContent: {
-    padding: 24,
+  filterContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
-  inputGroup: {
+  filterButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginRight: 10,
+    backgroundColor: '#f0f0f0',
+  },
+  activeFilter: {
+    backgroundColor: '#007AFF',
+  },
+  filterText: {
+    fontSize: 14,
+    color: '#666666',
+    fontWeight: '500',
+  },
+  activeFilterText: {
+    color: '#ffffff',
+  },
+  listContainer: {
+    padding: 20,
+  },
+  billItem: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  billHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  billNumber: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333333',
+  },
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  billContent: {
+    gap: 4,
+  },
+  billAmount: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#007AFF',
+  },
+  billDate: {
+    fontSize: 14,
+    color: '#666666',
+  },
+  dueDate: {
+    fontSize: 14,
+    color: '#ff6b6b',
+  },
+  orderName: {
+    fontSize: 14,
+    color: '#333333',
+    fontWeight: '500',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#666666',
+  },
+  loadingSubtext: {
+    marginTop: 5,
+    fontSize: 12,
+    color: '#999999',
+  },
+  loadingFooter: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  loadingFooterText: {
+    marginLeft: 10,
+    fontSize: 14,
+    color: '#666666',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 50,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#666666',
+    textAlign: 'center',
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#999999',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333333',
+  },
+  closeButton: {
+    fontSize: 16,
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  modalContent: {
+    flex: 1,
+    padding: 20,
+  },
+  billDetailCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 20,
   },
-  modernInput: {
-    backgroundColor: 'white',
+  billDetailNumber: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#333333',
+  },
+  detailSection: {
+    marginBottom: 20,
+  },
+  sectionTitle: {
     fontSize: 16,
-  },
-  readOnlyInput: {
-    backgroundColor: '#FEF3E2',
-  },
-  modernButton: {
-    backgroundColor: '#EA580C',
-    marginHorizontal: 0,
-    paddingVertical: 18,
-    borderRadius: 16,
-    shadowColor: '#EA580C',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: '#FB923C',
-    marginBottom: 16,
-  },
-  buttonContainer: {
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  cancelButton: {
-    backgroundColor: '#6B7280',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  cancelButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  emptyStateIcon: {
-    fontSize: 48,
-    marginBottom: 16,
-  },
-  emptyStateTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#A16207',
+    fontWeight: 'bold',
+    color: '#333333',
     marginBottom: 8,
   },
-  emptyStateSubtitle: {
+  amountText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#007AFF',
+  },
+  detailText: {
     fontSize: 14,
-    color: '#A16207',
-    opacity: 0.7,
-    textAlign: 'center',
-    lineHeight: 20,
+    color: '#666666',
+    marginBottom: 4,
   },
-  materialCard: {
-    backgroundColor: '#FEF3E2',
+  orderImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 8,
+    marginRight: 10,
+  },
+  paymentButton: {
+    backgroundColor: '#007AFF',
+    padding: 16,
     borderRadius: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#FDBA74',
+    alignItems: 'center',
+    marginTop: 20,
   },
-  // Add these missing styles to your existing StyleSheet.create({}) object:
-
-materialHeader: {
-  flexDirection: 'row',
-  justifyContent: 'space-between',
-  alignItems: 'flex-start',
-  marginBottom: 12,
-},
-
-materialName: {
-  flex: 1,
-  fontSize: 18,
-  fontWeight: '700',
-  color: '#C2410C',
-  marginRight: 12,
-},
-
-materialActions: {
-  flexDirection: 'row',
-  gap: 8,
-},
-
-editButton: {
-  backgroundColor: '#3B82F6',
-  paddingHorizontal: 12,
-  paddingVertical: 6,
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: '#60A5FA',
-},
-
-editButtonText: {
-  color: 'white',
-  fontSize: 12,
-  fontWeight: '600',
-},
-
-deleteButton: {
-  backgroundColor: '#DC2626',
-  paddingHorizontal: 12,
-  paddingVertical: 6,
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: '#F87171',
-},
-
-deleteButtonText: {
-  color: 'white',
-  fontSize: 12,
-  fontWeight: '600',
-},
-
-materialDetails: {
-  marginBottom: 12,
-  paddingVertical: 8,
-  borderTopWidth: 1,
-  borderTopColor: '#FDBA74',
-},
-
-materialDetailText: {
-  fontSize: 14,
-  color: '#A16207',
-  marginBottom: 4,
-  fontWeight: '500',
-},
-
-materialTotalPrice: {
-  fontSize: 16,
-  fontWeight: '700',
-  color: '#EA580C',
-  marginBottom: 4,
-},
-
-materialLocations: {
-  marginBottom: 12,
-  paddingVertical: 8,
-  borderTopWidth: 1,
-  borderTopColor: '#FDBA74',
-},
-
-locationText: {
-  fontSize: 13,
-  color: '#92400E',
-  marginBottom: 4,
-  fontWeight: '500',
-},
-
-materialImageContainer: {
-  marginTop: 12,
-  borderRadius: 8,
-  overflow: 'hidden',
-  borderWidth: 1,
-  borderColor: '#FDBA74',
-},
-
-materialImage: {
-  width: '100%',
-  height: 120,
-  borderRadius: 8,
-},
-
-activeModernTab: {
-  // This style is handled by activeTabContent, but you can add specific tab styling here if needed
-  shadowColor: '#FB923C',
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.2,
-  shadowRadius: 4,
-  elevation: 3,
-}
+  paymentButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  paymentModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  paymentModalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 20,
+    width: width * 0.9,
+    maxWidth: 400,
+  },
+  paymentModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333333',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  paymentInput: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    marginBottom: 12,
+    backgroundColor: '#f9f9f9',
+  },
+  paymentNotesInput: {
+    height: 80,
+    textAlignVertical: 'top',
+  },
+  paymentModalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+  },
+  cancelButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginRight: 10,
+    backgroundColor: '#f0f0f0',
+  },
+  cancelButtonText: {
+    color: '#666666',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  confirmButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginLeft: 10,
+    backgroundColor: '#007AFF',
+  },
+  confirmButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
 });
 
 export default CustomerScreen;

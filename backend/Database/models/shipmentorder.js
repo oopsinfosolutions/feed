@@ -1,16 +1,16 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../Database/DB');
+const sequelize = require('../Database/DB'); // Adjust path if needed
 
-const ShipmentDetail = sequelize.define('shipment_detail', {
+const shipment_details = sequelize.define('Material', {
   id: {
     type: DataTypes.INTEGER,
-    autoIncrement: true,
     primaryKey: true,
+    autoIncrement: true,
     allowNull: false
   },
   detail: {
     type: DataTypes.TEXT,
-    allowNull: false
+    
   },
   price_per_unit: {
     type: DataTypes.DECIMAL(10, 2),
@@ -56,6 +56,10 @@ const ShipmentDetail = sequelize.define('shipment_detail', {
     type: DataTypes.STRING(255),
     allowNull: true
   },
+  video: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
   video1: {
     type: DataTypes.STRING(255),
     allowNull: true
@@ -88,6 +92,35 @@ const ShipmentDetail = sequelize.define('shipment_detail', {
     type: DataTypes.STRING(255),
     allowNull: true
   },
+
+  unit: {
+    type: DataTypes.STRING(50),
+    allowNull: true
+  },
+  quantity: {
+    type: DataTypes.INTEGER,
+    allowNull: true
+  },
+  unitPrice: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: true
+  },
+  totalPrice: {
+    type: DataTypes.DECIMAL(12, 2),
+    allowNull: true
+  },
+  vehicleName: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
+  vehicleNumber: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
+  offer: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
   need_product: {
     type: DataTypes.STRING(255),
     allowNull: true
@@ -99,9 +132,27 @@ const ShipmentDetail = sequelize.define('shipment_detail', {
   phone: {
     type: DataTypes.STRING(15),
     allowNull: true
-  }
+  },
+  discount: {
+  type: DataTypes.FLOAT,
+  allowNull: true,
+  defaultValue: 0
+},
+bill_text:{
+  type: DataTypes.STRING(255),
+  allowNull: true
+},userId: {
+  type: DataTypes.STRING,
+  allowNull: false
+},
+role: {
+  type: DataTypes.STRING, // 'employee', 'office'
+  allowNull: false
+}
+
 }, {
+  tableName: 'shipment_details',
   timestamps: true
 });
 
-module.exports = ShipmentDetail;
+module.exports = shipment_details;
