@@ -23,13 +23,6 @@ const Signup = ({ navigation }) => {
   const openMenu = () => setMenuVisible(true);
   const closeMenu = () => setMenuVisible(false);
 
-  // Generate unique user_id
-  const generateUserId = () => {
-    const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 1000);
-    return `USER_${timestamp}_${random}`;
-  };
-
   const handleSignup = async () => {
     if (!fullname || !email || !password || !phone || type === 'Select Role') {
       Alert.alert('Validation Error', 'All fields and role selection are required!');
@@ -60,8 +53,7 @@ const Signup = ({ navigation }) => {
       email, 
       password, 
       phone, 
-      type,
-      user_id: generateUserId()
+      type
     };
 
     try {
@@ -69,27 +61,67 @@ const Signup = ({ navigation }) => {
       const response = await axios.post('http://192.168.1.42:3000/signup', newUser);
 
       console.log('Server Response:', response.data);
-      setUsers([...users, { id: response.data.id || Math.random(), ...newUser }]);
       
-      // Reset form
-      setfullname('');
-      setEmail('');
-      setPassword('');
-      setPhone('');
-      setType('Select Role');
-      
-      Alert.alert('Success', 'User signed up successfully!');
+      // Handle different response scenarios
+      if (response.data.message) {
+        // Check if it's a pending approval message
+        if (response.data.message.includes('approval')) {
+          Alert.alert(
+            'Registration Submitted', 
+            'Your registration request has been sent to the admin for approval. You will be notified once approved.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  // Reset form
+                  setfullname('');
+                  setEmail('');
+                  setPassword('');
+                  setPhone('');
+                  setType('Select Role');
+                  
+                  // Navigate to login screen
+                  navigation.navigate('Login');
+                }
+              }
+            ]
+          );
+        } else {
+          // Regular successful registration
+          setUsers([...users, { id: response.data.user?.id || Math.random(), ...newUser }]);
+          
+          // Reset form
+          setfullname('');
+          setEmail('');
+          setPassword('');
+          setPhone('');
+          setType('Select Role');
+          
+          Alert.alert(
+            'Success', 
+            'User registered successfully! You can now login.',
+            [
+              {
+                text: 'OK',
+                onPress: () => navigation.navigate('Login')
+              }
+            ]
+          );
+        }
+      }
 
     } catch (error) {
       console.error('Signup Error:', error);
       
       // Handle specific error messages from server
-      if (error.response && error.response.data && error.response.data.message) {
-        Alert.alert('Error', error.response.data.message);
+      if (error.response && error.response.data && error.response.data.error) {
+        Alert.alert('Registration Error', error.response.data.error);
       } else if (error.response && error.response.status === 409) {
-        Alert.alert('Error', 'Email or User ID already exists!');
+        Alert.alert('Error', 'Email or phone number already exists!');
+      } else if (error.response && error.response.status === 400) {
+        Alert.alert('Error', 'Please fill in all required fields correctly.');
       } else {
-        Alert.alert('Error', 'Failed to signup. Please try again.');
+        Alert.alert('Error', 'Failed to register. Please try again.');
       }
     }
   };
@@ -141,6 +173,7 @@ const Signup = ({ navigation }) => {
         keyboardType="phone-pad"
         value={phone}
         onChangeText={setPhone}
+        maxLength={10}
       />
 
       <Menu
@@ -157,7 +190,7 @@ const Signup = ({ navigation }) => {
         }
       >
         <Menu.Item 
-          onPress={() => { setType('Client'); closeMenu(); }} 
+          onPress={() => { setType('client'); closeMenu(); }} 
           title="Client" 
         />
         <Divider />
@@ -168,12 +201,17 @@ const Signup = ({ navigation }) => {
         <Divider />
         <Menu.Item 
           onPress={() => { setType('field_employee'); closeMenu(); }} 
-          title="Field Employee" 
+          title="Employee" 
         />
         <Divider />
         <Menu.Item 
           onPress={() => { setType('office_employee'); closeMenu(); }} 
           title="Office Employee" 
+        />
+        <Divider />
+        <Menu.Item 
+          onPress={() => { setType('sale_parchase'); closeMenu(); }} 
+          title="Sales & Purchase" 
         />
       </Menu>
 
@@ -189,6 +227,24 @@ const Signup = ({ navigation }) => {
           Already have an account? <Text style={{ fontWeight: 'bold' }}>Login</Text>
         </Text>
       </TouchableOpacity>
+
+      {/* Info text for employee types only */}
+      {(type === 'employee' || type === 'officeemp' || type === 'sale_parchase') && (
+        <View style={styles.infoContainer}>
+          <Text style={styles.infoText}>
+            ⚠️ Note: Employee registrations require admin approval before login access is granted.
+          </Text>
+        </View>
+      )}
+
+      {/* Info text for client/dealer */}
+      {(type === 'client' || type === 'dealer') && (
+        <View style={styles.successInfoContainer}>
+          <Text style={styles.successInfoText}>
+            ✅ Note: {type === 'client' ? 'Client' : 'Dealer'} accounts have immediate access after registration.
+          </Text>
+        </View>
+      )}
 
       {users.length > 0 && (
         <>
@@ -252,6 +308,34 @@ const styles = StyleSheet.create({
   loginRedirectText: {
     color: '#007bff',
     fontSize: 16,
+  },
+  infoContainer: {
+    backgroundColor: '#fff3cd',
+    padding: 12,
+    borderRadius: 8,
+    marginVertical: 10,
+    borderWidth: 1,
+    borderColor: '#ffeaa7',
+  },
+  infoText: {
+    color: '#856404',
+    fontSize: 14,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  successInfoContainer: {
+    backgroundColor: '#d4edda',
+    padding: 12,
+    borderRadius: 8,
+    marginVertical: 10,
+    borderWidth: 1,
+    borderColor: '#c3e6cb',
+  },
+  successInfoText: {
+    color: '#155724',
+    fontSize: 14,
+    textAlign: 'center',
+    fontWeight: '500',
   },
   submittedUsersHeading: {
     fontSize: 20,

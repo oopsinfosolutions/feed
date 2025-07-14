@@ -43,8 +43,14 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
     detail: '',
   });
 
-  // New state for send to client functionality
-  const [sendToClient, setSendToClient] = useState(false);
+  // Updated state for send to client functionality (now send as bill)
+  const [sendAsBill, setSendAsBill] = useState(false);
+  
+  // New states for bill-specific fields
+  const [billFields, setBillFields] = useState({
+    dueDate: '',
+    additionalNotes: ''
+  });
 
   useEffect(() => {
     fetchClients();
@@ -166,6 +172,13 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
     }));
   };
 
+  const handleBillFieldChange = (field, value) => {
+    setBillFields(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
   const getSelectedClientName = () => {
     const selectedClient = clients.find(client => client.id?.toString() === formData.c_id);
     return selectedClient ? `${selectedClient.fullName} (${selectedClient.email})` : 'Select a client...';
@@ -201,9 +214,9 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
       return false;
     }
     
-    // Additional validation for send to client
-    if (sendToClient && !formData.c_id) {
-      Alert.alert('Error', 'Please select a client when sending order to client');
+    // Additional validation for send as bill
+    if (sendAsBill && !formData.c_id) {
+      Alert.alert('Error', 'Please select a client when sending order as bill');
       return false;
     }
     
@@ -228,8 +241,62 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
       c_id: '',
       detail: '',
     });
+    setBillFields({
+      dueDate: '',
+      additionalNotes: ''
+    });
     setEditingOrder(null);
-    setSendToClient(false);
+    setSendAsBill(false);
+  };
+
+  // New function to send order as bill
+  const sendOrderAsBill = async (orderId) => {
+    try {
+      setLoading(true);
+      
+      const billData = {
+        clientId: formData.c_id,
+        dueDate: billFields.dueDate || null,
+        additionalNotes: billFields.additionalNotes || '',
+        createdBy: userInfo?.id || userId
+      };
+
+      console.log('Sending bill with data:', billData);
+      
+      const response = await fetch(`${API_BASE_URL}/api/admin/orders/${orderId}/send-bill`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${userInfo?.token}`,
+        },
+        body: JSON.stringify(billData),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Bill send response:', data);
+      
+      if (data.success) {
+        Alert.alert('Success', 'Order created and bill sent to client successfully!');
+        resetForm();
+        if (!showForm) {
+          fetchOrders();
+        }
+        return true;
+      } else {
+        Alert.alert('Error', data.message || 'Failed to send bill to client');
+        return false;
+      }
+    } catch (error) {
+      console.error('Error sending bill:', error);
+      Alert.alert('Error', `Failed to send bill: ${error.message}`);
+      return false;
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -243,12 +310,8 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
         // Editing existing order
         url = `${API_BASE_URL}/api/admin/orders/${editingOrder.id}`;
         method = 'PUT';
-      } else if (sendToClient) {
-        // Creating new order and sending to client
-        url = `${API_BASE_URL}/api/admin/orders/send-to-client`;
-        method = 'POST';
       } else {
-        // Creating regular order
+        // Creating regular order (always create first, then send bill if needed)
         url = `${API_BASE_URL}/api/admin/orders`;
         method = 'POST';
       }
@@ -272,14 +335,6 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
         detail: formData.detail || '',
       };
 
-      // Add client email for send-to-client functionality
-      if (sendToClient && formData.c_id) {
-        const selectedClient = clients.find(client => client.id?.toString() === formData.c_id);
-        if (selectedClient) {
-          dataToSend.clientEmail = selectedClient.email;
-        }
-      }
-  
       // For updates, include customer fields that backend expects
       if (editingOrder) {
         const selectedClient = clients.find(client => client.id?.toString() === formData.c_id);
@@ -309,19 +364,35 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
       console.log('Submit response:', data);
       
       if (data.success) {
-        let successMessage = '';
         if (editingOrder) {
-          successMessage = 'Order updated successfully!';
-        } else if (sendToClient) {
-          successMessage = 'Order created and sent to client successfully!';
+          Alert.alert('Success', 'Order updated successfully!');
+          resetForm();
+          if (!showForm) {
+            fetchOrders();
+          }
         } else {
-          successMessage = 'Order created successfully!';
-        }
-        
-        Alert.alert('Success', successMessage);
-        resetForm();
-        if (!showForm) {
-          fetchOrders();
+          // Order created successfully
+          const createdOrderId = data.data?.order?.id || data.data?.id;
+          
+          if (sendAsBill && createdOrderId) {
+            // Send the order as bill
+            const billSent = await sendOrderAsBill(createdOrderId);
+            if (!billSent) {
+              // Bill sending failed, but order was created
+              Alert.alert('Partial Success', 'Order created successfully, but failed to send bill to client. You can try sending the bill later from the orders list.');
+              resetForm();
+              if (!showForm) {
+                fetchOrders();
+              }
+            }
+          } else {
+            // Regular order creation
+            Alert.alert('Success', 'Order created successfully!');
+            resetForm();
+            if (!showForm) {
+              fetchOrders();
+            }
+          }
         }
       } else {
         Alert.alert('Error', data.message || `Failed to ${editingOrder ? 'update' : 'create'} order`);
@@ -332,6 +403,63 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // New function to send existing order as bill
+  const handleSendOrderAsBill = (order) => {
+    Alert.prompt(
+      'Send Bill to Client',
+      'Enter due date (optional) in YYYY-MM-DD format:',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Send Bill',
+          onPress: async (dueDate) => {
+            try {
+              setLoading(true);
+              
+              const billData = {
+                clientId: order.c_id,
+                dueDate: dueDate || null,
+                additionalNotes: '',
+                createdBy: userInfo?.id || userId
+              };
+
+              const response = await fetch(`${API_BASE_URL}/api/admin/orders/${order.id}/send-bill`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${userInfo?.token}`,
+                },
+                body: JSON.stringify(billData),
+              });
+
+              if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+              }
+
+              const data = await response.json();
+              
+              if (data.success) {
+                Alert.alert('Success', 'Bill sent to client successfully!');
+                fetchOrders();
+              } else {
+                Alert.alert('Error', data.message || 'Failed to send bill');
+              }
+            } catch (error) {
+              console.error('Error sending bill:', error);
+              Alert.alert('Error', `Failed to send bill: ${error.message}`);
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ],
+      'plain-text'
+    );
   };
 
   const handleEditOrder = (order) => {
@@ -355,7 +483,7 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
       totalPrice: order.totalPrice?.toString() || '0',
     });
     setEditingOrder(order);
-    setSendToClient(false); // Reset send to client when editing
+    setSendAsBill(false); // Reset send as bill when editing
     setShowForm(true);
   };
 
@@ -469,20 +597,20 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
         </TouchableOpacity>
       )}
       
-      {/* Send to Client Toggle - Only show when not editing */}
+      {/* Send as Bill Toggle - Only show when not editing */}
       {!editingOrder && (
-        <View style={styles.sendToClientContainer}>
+        <View style={styles.sendAsBillContainer}>
           <TouchableOpacity
-            style={[styles.sendToClientToggle, sendToClient && styles.sendToClientToggleActive]}
-            onPress={() => setSendToClient(!sendToClient)}
+            style={[styles.sendAsBillToggle, sendAsBill && styles.sendAsBillToggleActive]}
+            onPress={() => setSendAsBill(!sendAsBill)}
           >
-            <Text style={[styles.sendToClientText, sendToClient && styles.sendToClientTextActive]}>
-              {sendToClient ? '✓ Send to Client' : 'Send to Client'}
+            <Text style={[styles.sendAsBillText, sendAsBill && styles.sendAsBillTextActive]}>
+              {sendAsBill ? '✓ Send as Bill to Client' : 'Send as Bill to Client'}
             </Text>
           </TouchableOpacity>
-          {sendToClient && (
-            <Text style={styles.sendToClientDescription}>
-              Order will be sent to the selected client for approval
+          {sendAsBill && (
+            <Text style={styles.sendAsBillDescription}>
+              Order will be created and automatically sent to the selected client as a bill
             </Text>
           )}
         </View>
@@ -490,13 +618,13 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
       
       <View style={styles.inputGroup}>
         <Text style={styles.label}>
-          Select Client {sendToClient && <Text style={styles.requiredMark}>*</Text>}
+          Select Client {sendAsBill && <Text style={styles.requiredMark}>*</Text>}
         </Text>
         {loading ? (
           <Text style={styles.loadingText}>Loading clients...</Text>
         ) : (
           <TouchableOpacity
-            style={[styles.clientSelector, sendToClient && !formData.c_id && styles.errorBorder]}
+            style={[styles.clientSelector, sendAsBill && !formData.c_id && styles.errorBorder]}
             onPress={() => setShowClientPicker(true)}
           >
             <Text style={[
@@ -593,6 +721,39 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
         />
       </View>
 
+      {/* Bill-specific fields - Only show when sending as bill */}
+      {sendAsBill && (
+        <>
+          <View style={styles.billFieldsContainer}>
+            <Text style={styles.billFieldsTitle}>Bill Details</Text>
+            
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Due Date (Optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={billFields.dueDate}
+                onChangeText={(value) => handleBillFieldChange('dueDate', value)}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#999"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Additional Notes</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={billFields.additionalNotes}
+                onChangeText={(value) => handleBillFieldChange('additionalNotes', value)}
+                placeholder="Enter additional notes for the bill"
+                placeholderTextColor="#999"
+                multiline
+                numberOfLines={3}
+              />
+            </View>
+          </View>
+        </>
+      )}
+
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Address</Text>
         <TextInput
@@ -659,7 +820,7 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
         <Text style={styles.submitButtonText}>
           {loading ? 'Processing...' : 
            editingOrder ? 'Update Order' : 
-           sendToClient ? 'Create & Send to Client' : 'Create Order'}
+           sendAsBill ? 'Create Order & Send Bill' : 'Create Order'}
         </Text>
       </TouchableOpacity>
     </ScrollView>
@@ -676,6 +837,14 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
           >
             <Text style={styles.editButtonText}>Edit</Text>
           </TouchableOpacity>
+          {item.c_id && item.status !== 'bill_sent' && (
+            <TouchableOpacity
+              style={styles.billButton}
+              onPress={() => handleSendOrderAsBill(item)}
+            >
+              <Text style={styles.billButtonText}>Send Bill</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.deleteButton}
             onPress={() => handleDeleteOrder(item.id)}
@@ -744,6 +913,11 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
         <Text style={styles.orderDetailText}>
           <Text style={styles.boldText}>Status:</Text> {item.status}
         </Text>
+        {item.status === 'bill_sent' && (
+          <Text style={styles.orderDetailText}>
+            <Text style={styles.boldText}>Bill Status:</Text> Sent to Client
+          </Text>
+        )}
         {item.sentToClient && (
           <Text style={styles.orderDetailText}>
             <Text style={styles.boldText}>Sent to Client:</Text> {item.sentAt ? new Date(item.sentAt).toLocaleDateString() : 'Yes'}
@@ -898,7 +1072,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  sendToClientContainer: {
+  sendAsBillContainer: {
     marginBottom: 20,
     padding: 15,
     backgroundColor: '#f8f9fa',
@@ -906,28 +1080,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e9ecef',
   },
-  sendToClientToggle: {
+  sendAsBillToggle: {
     backgroundColor: '#6c757d',
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
     marginBottom: 8,
   },
-  sendToClientToggleActive: {
-    backgroundColor: '#28a745',
+  sendAsBillToggleActive: {
+    backgroundColor: '#17a2b8',
   },
-  sendToClientText: {
+  sendAsBillText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
-  sendToClientTextActive: {
+  sendAsBillTextActive: {
     color: '#fff',
   },
-  sendToClientDescription: {
+  sendAsBillDescription: {
     fontSize: 14,
     color: '#6c757d',
     fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  billFieldsContainer: {
+    marginBottom: 20,
+    padding: 15,
+    backgroundColor: '#e8f4f8',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bee5eb',
+  },
+  billFieldsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#0c5460',
+    marginBottom: 15,
     textAlign: 'center',
   },
   inputGroup: {
@@ -1166,7 +1355,7 @@ const styles = StyleSheet.create({
   },
   orderActions: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
   editButton: {
     backgroundColor: '#ffc107',
@@ -1174,6 +1363,16 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   editButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  billButton: {
+    backgroundColor: '#17a2b8',
+    padding: 8,
+    borderRadius: 6,
+  },
+  billButtonText: {
     color: '#fff',
     fontSize: 12,
     fontWeight: '500',

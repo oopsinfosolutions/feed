@@ -175,11 +175,11 @@ const AdminScreen = () => {
             />
             <StatsCard
               icon="folder-outline"
-              title="Materials"
+              title="Product"
               count={materialsCount}
               color="#10b981"
               gradient="rgba(16, 185, 129, 0.2)"
-              route="Material"
+              route="Product"
               delay={200}
             />
             <StatsCard

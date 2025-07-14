@@ -3,686 +3,682 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
+  ScrollView,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
+  Image,
+  RefreshControl,
   Modal,
   TextInput,
-  ActivityIndicator,
-  RefreshControl,
-  Image,
-  ScrollView,
-  Dimensions,
+  Linking,
+  SafeAreaView
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 
-const { width, height } = Dimensions.get('window');
+// Update this to match your server URL
+const API_BASE_URL = 'http://192.168.1.42:3000';
 
-const CustomerScreen = ({ clientId }) => {
+const CustomerScreen = ({ navigation }) => {
+  const [user, setUser] = useState(null);
   const [bills, setBills] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
-  const [showBillDetails, setShowBillDetails] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentData, setPaymentData] = useState({
     paymentMethod: '',
     transactionId: '',
-    paymentNotes: '',
+    paymentNotes: ''
   });
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [hasNextPage, setHasNextPage] = useState(false);
-  const [totalBills, setTotalBills] = useState(0);
-  const [processingPayment, setProcessingPayment] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('unknown');
 
-  // IMPORTANT: Update this to your actual server IP and port
-  const API_BASE_URL = 'http://192.168.1.42:3000';
+  const [stats, setStats] = useState({
+    totalBills: 0,
+    pendingBills: 0,
+    successfulBills: 0,
+    totalAmount: 0,
+    pendingAmount: 0
+  });
 
-  // Enhanced test server connection
-  const testConnection = async () => {
+  const paymentMethods = [
+    'Cash',
+    'UPI',
+    'Bank Transfer',
+    'Credit Card',
+    'Debit Card',
+    'Cheque',
+    'Online Banking'
+  ];
+
+  useFocusEffect(
+    useCallback(() => {
+      loadUserData();
+    }, [])
+  );
+
+  const navigateToLogin = () => {
+    navigation.replace('Login');
+  };
+
+  const loadUserData = async () => {
     try {
-      console.log('Testing connection to:', `${API_BASE_URL}/api/test`);
+      console.log('=== Loading user data ===');
       
-      const response = await fetch(`${API_BASE_URL}/api/test`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        timeout: 5000, // 5 second timeout
-      });
-
-      console.log('Test response status:', response.status);
-      console.log('Test response headers:', response.headers);
+      // Get data using the keys that LoginForm actually saves
+      const userId = await AsyncStorage.getItem('user_id');
+      const userType = await AsyncStorage.getItem('user_type');
+      const userPhone = await AsyncStorage.getItem('user_phone');
+      const userName = await AsyncStorage.getItem('user_name');
       
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      console.log('Raw user data from storage:');
+      console.log('- user_id:', userId);
+      console.log('- user_type:', userType);
+      console.log('- user_phone:', userPhone);
+      console.log('- user_name:', userName);
+      
+      if (!userId || !userType) {
+        console.log('Essential user data missing');
+        Alert.alert('Authentication Issue', 'Please login again. User data not found.');
+        navigateToLogin();
+        return;
       }
-
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const textResponse = await response.text();
-        console.log('Non-JSON test response:', textResponse);
-        throw new Error('Server returned non-JSON response');
+      
+      // Create user object from individual storage items
+      const parsedUser = {
+        id: parseInt(userId),
+        type: userType,
+        fullname: userName || 'User',
+        phone: userPhone
+      };
+      
+      console.log('Constructed user object:', parsedUser);
+      
+      // Check if this is actually a customer - be flexible with user type
+      if (userType && userType !== 'Client' && userType !== 'client' && userType !== 'Customer') {
+        console.log('User is not a client, type is:', userType);
+        Alert.alert('Access Denied', `This screen is for customers only. Your account type: ${userType}`);
+        navigateToLogin();
+        return;
       }
-
-      const data = await response.json();
-      console.log('Test server response:', data);
-      setConnectionStatus('connected');
-      return true;
+      
+      setUser(parsedUser);
+      console.log('User data set successfully, now fetching bills...');
+      
+      // Fetch bills for this user
+      await fetchBills(parsedUser.id);
+      
     } catch (error) {
-      console.error('Server connection test failed:', error);
-      setConnectionStatus('failed');
-      
-      let errorMessage = 'Connection failed. Please check:\n';
-      if (error.message.includes('Network request failed')) {
-        errorMessage += '• Network connection\n• Server is running\n• IP address is correct';
-      } else if (error.message.includes('timeout')) {
-        errorMessage += '• Server response time\n• Network latency';
-      } else if (error.message.includes('non-JSON')) {
-        errorMessage += '• Server is returning HTML instead of JSON\n• Check if the route exists';
-      } else {
-        errorMessage += `• Error: ${error.message}`;
-      }
-      
-      Alert.alert('Connection Error', errorMessage);
-      return false;
+      console.error('Error loading user data:', error);
+      Alert.alert('Error', `Failed to load user data: ${error.message}. Please login again.`);
+      navigateToLogin();
     }
   };
 
-  // Enhanced fetchBills function with better error handling
-  const fetchBills = useCallback(async (page = 1, status = 'all', refresh = false) => {
+  const fetchBills = async (clientId) => {
     try {
-      if (refresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
-      // Test connection first
-      const isConnected = await testConnection();
-      if (!isConnected) {
-        return;
-      }
-
-      const queryParams = new URLSearchParams({
-        page: page.toString(),
-        limit: '20',
-        sortBy: 'createdAt',
-        sortOrder: 'DESC',
-      });
-
-      if (status !== 'all') {
-        queryParams.append('status', status);
-      }
-
-      const url = `${API_BASE_URL}/api/client/bills/${clientId}?${queryParams}`;
-      console.log('Fetching bills from:', url);
-
-      const response = await fetch(url, {
+      console.log('=== Fetching bills ===');
+      setLoading(true);
+      
+      // Create a dummy token since your backend doesn't seem to require real JWT authentication
+      const dummyToken = 'dummy-token-for-api-calls';
+      
+      console.log(`Fetching bills for client ID: ${clientId}`);
+      console.log(`Using dummy token for API calls`);
+      
+      const response = await fetch(`${API_BASE_URL}/api/client/bills/${clientId}`, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        timeout: 10000, // 10 second timeout
+          'Authorization': `Bearer ${dummyToken}`,
+          'Content-Type': 'application/json'
+        }
       });
 
-      console.log('Bills response status:', response.status);
-      console.log('Bills response headers:', response.headers);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Bills error response:', errorText);
+      console.log('Bills API response status:', response.status);
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Bills API response data:', JSON.stringify(data, null, 2));
         
-        if (response.status === 404) {
-          throw new Error('Bills endpoint not found. Please check server routes.');
-        } else if (response.status === 500) {
-          throw new Error('Server error. Check server logs for details.');
+        if (data.success) {
+          const bills = data.data.bills || [];
+          console.log(`Successfully fetched ${bills.length} bills`);
+          setBills(bills);
+          calculateStats(bills);
         } else {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          console.error('API returned error:', data.message);
+          Alert.alert('Error', data.message || 'Failed to fetch bills');
         }
-      }
-
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const textResponse = await response.text();
-        console.error('Non-JSON bills response:', textResponse);
-        throw new Error('Server returned HTML instead of JSON. Check if the route exists.');
-      }
-
-      const data = await response.json();
-      console.log('Bills API Response:', data);
-
-      if (data.success) {
-        if (page === 1) {
-          setBills(data.data.bills || []);
-        } else {
-          setBills(prev => [...prev, ...(data.data.bills || [])]);
-        }
-        setHasNextPage(data.data.pagination?.hasNext || false);
-        setTotalBills(data.data.pagination?.total || 0);
-        setConnectionStatus('connected');
+      } else if (response.status === 401) {
+        console.log('Unauthorized response - API might require authentication');
+        const errorText = await response.text();
+        console.log('401 Error details:', errorText);
+        
+        // Don't redirect on 401, just show error since your backend might not have auth middleware
+        Alert.alert('API Error', 'Bills API requires authentication. Please contact support.');
       } else {
-        throw new Error(data.message || 'Failed to fetch bills');
+        const errorData = await response.text();
+        console.error('HTTP error:', response.status, errorData);
+        
+        // Don't redirect on API errors, just show the error
+        Alert.alert('Error', `Failed to fetch bills (${response.status}). Please try again later.`);
       }
     } catch (error) {
-      console.error('Error fetching bills:', error);
-      setConnectionStatus('failed');
+      console.error('Network error fetching bills:', error);
       
-      let errorMessage = 'Failed to fetch bills:\n';
-      if (error.message.includes('Network request failed')) {
-        errorMessage += 'Network connection failed';
-      } else if (error.message.includes('timeout')) {
-        errorMessage += 'Request timed out';
-      } else if (error.message.includes('HTML instead of JSON')) {
-        errorMessage += 'Server configuration issue';
-      } else {
-        errorMessage += error.message;
-      }
-      
-      Alert.alert('Error', errorMessage);
+      // Don't redirect on network errors, just show the error
+      Alert.alert('Network Error', 'Could not connect to server. Please check your internet connection.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [clientId, API_BASE_URL]);
-
-  // Enhanced fetchBillDetails function
-  const fetchBillDetails = async (billId) => {
-    try {
-      const url = `${API_BASE_URL}/api/client/bill/${billId}?clientId=${clientId}`;
-      console.log('Fetching bill details from:', url);
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        timeout: 10000,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Bill details error response:', errorText);
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const textResponse = await response.text();
-        console.error('Non-JSON bill details response:', textResponse);
-        throw new Error('Server returned HTML instead of JSON');
-      }
-
-      const data = await response.json();
-      console.log('Bill details response:', data);
-
-      if (data.success) {
-        setSelectedBill(data.data);
-        setShowBillDetails(true);
-      } else {
-        throw new Error(data.message || 'Failed to fetch bill details');
-      }
-    } catch (error) {
-      console.error('Error fetching bill details:', error);
-      Alert.alert('Error', `Failed to fetch bill details: ${error.message}`);
-    }
   };
 
-  // Enhanced markPaymentComplete function
-  const markPaymentComplete = async () => {
-    if (!paymentData.paymentMethod.trim()) {
-      Alert.alert('Error', 'Please enter payment method');
-      return;
-    }
+  const calculateStats = (billsData) => {
+    const totalBills = billsData.length;
+    const pendingBills = billsData.filter(bill => bill.paymentStatus === 'pending').length;
+    const successfulBills = billsData.filter(bill => bill.paymentStatus === 'successful').length;
+    const totalAmount = billsData.reduce((sum, bill) => sum + parseFloat(bill.totalAmount || 0), 0);
+    const pendingAmount = billsData
+      .filter(bill => bill.paymentStatus === 'pending')
+      .reduce((sum, bill) => sum + parseFloat(bill.totalAmount || 0), 0);
 
-    setProcessingPayment(true);
+    setStats({
+      totalBills,
+      pendingBills,
+      successfulBills,
+      totalAmount,
+      pendingAmount
+    });
 
-    try {
-      const url = `${API_BASE_URL}/api/client/bill/${selectedBill.id}/payment`;
-      console.log('Updating payment status at:', url);
-
-      const response = await fetch(url, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-          clientId: clientId,
-          ...paymentData,
-        }),
-        timeout: 10000,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Payment update error response:', errorText);
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const textResponse = await response.text();
-        console.error('Non-JSON payment response:', textResponse);
-        throw new Error('Server returned HTML instead of JSON');
-      }
-
-      const data = await response.json();
-      console.log('Payment update response:', data);
-
-      if (data.success) {
-        Alert.alert('Success', 'Payment marked as complete successfully');
-        setShowPaymentModal(false);
-        setShowBillDetails(false);
-        setPaymentData({
-          paymentMethod: '',
-          transactionId: '',
-          paymentNotes: '',
-        });
-        // Refresh bills list
-        fetchBills(1, statusFilter, true);
-      } else {
-        throw new Error(data.message || 'Failed to update payment status');
-      }
-    } catch (error) {
-      console.error('Error updating payment:', error);
-      Alert.alert('Error', `Failed to update payment status: ${error.message}`);
-    } finally {
-      setProcessingPayment(false);
-    }
-  };
-
-  // Load more bills (pagination)
-  const loadMoreBills = () => {
-    if (hasNextPage && !loading) {
-      const nextPage = currentPage + 1;
-      setCurrentPage(nextPage);
-      fetchBills(nextPage, statusFilter);
-    }
-  };
-
-  // Handle status filter change
-  const handleStatusFilterChange = (status) => {
-    setStatusFilter(status);
-    setCurrentPage(1);
-    fetchBills(1, status);
-  };
-
-  // Format date
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
+    console.log('Calculated stats:', {
+      totalBills,
+      pendingBills,
+      successfulBills,
+      totalAmount,
+      pendingAmount
     });
   };
 
-  // Format currency
-  const formatCurrency = (amount) => {
-    return `₹${parseFloat(amount).toLocaleString('en-IN', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
+  const onRefresh = () => {
+    setRefreshing(true);
+    if (user) {
+      fetchBills(user.id);
+    }
   };
 
-  // Get status color
+  const handleBillPress = async (bill) => {
+    try {
+      const dummyToken = 'dummy-token-for-api-calls';
+      console.log(`Fetching details for bill ID: ${bill.id}`);
+      
+      const response = await fetch(
+        `${API_BASE_URL}/api/client/bill/${bill.id}?clientId=${user.id}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${dummyToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      console.log('Bill detail response status:', response.status);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Bill detail response:', data);
+        
+        if (data.success) {
+          setSelectedBill(data.data);
+        } else {
+          Alert.alert('Error', data.message || 'Failed to fetch bill details');
+        }
+      } else {
+        const errorData = await response.text();
+        console.error('Bill detail error:', response.status, errorData);
+        Alert.alert('Error', 'Failed to fetch bill details');
+      }
+    } catch (error) {
+      console.error('Error fetching bill details:', error);
+      Alert.alert('Error', 'Network error. Please try again.');
+    }
+  };
+
+  const handlePayment = async () => {
+    if (!paymentData.paymentMethod) {
+      Alert.alert('Error', 'Please select a payment method');
+      return;
+    }
+
+    try {
+      const dummyToken = 'dummy-token-for-api-calls';
+      console.log('Submitting payment for bill:', selectedBill.id);
+      
+      const response = await fetch(
+        `${API_BASE_URL}/api/client/bill/${selectedBill.id}/payment`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${dummyToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            clientId: user.id,
+            ...paymentData
+          })
+        }
+      );
+
+      console.log('Payment response status:', response.status);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Payment response:', data);
+        
+        Alert.alert('Success', 'Payment marked as completed successfully!');
+        setShowPaymentModal(false);
+        setPaymentData({ paymentMethod: '', transactionId: '', paymentNotes: '' });
+        setSelectedBill(null);
+        await fetchBills(user.id);
+      } else {
+        const errorData = await response.json();
+        console.error('Payment error:', errorData);
+        Alert.alert('Error', errorData.message || 'Failed to update payment');
+      }
+    } catch (error) {
+      console.error('Error updating payment:', error);
+      Alert.alert('Error', 'Network error. Please try again.');
+    }
+  };
+
+  const handleLogout = async () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Clear the data using the same keys LoginForm uses
+              await AsyncStorage.multiRemove(['user_id', 'user_type', 'user_phone', 'user_name']);
+              navigateToLogin();
+            } catch (error) {
+              console.error('Error during logout:', error);
+              navigateToLogin();
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
-      case 'payment_pending':
-        return '#ff6b6b';
-      case 'complete':
-        return '#51cf66';
+      case 'pending':
+        return '#ffc107';
+      case 'successful':
+        return '#28a745';
       default:
-        return '#868e96';
+        return '#6c757d';
     }
   };
 
-  // Get status text
   const getStatusText = (status) => {
     switch (status) {
-      case 'payment_pending':
-        return 'Payment Pending';
-      case 'complete':
-        return 'Completed';
+      case 'pending':
+        return 'Pending';
+      case 'successful':
+        return 'Paid';
       default:
-        return status;
+        return 'Unknown';
     }
   };
 
-  // Enhanced debug component
-  const DebugInfo = () => (
-    <View style={styles.debugInfo}>
-      <Text style={styles.debugText}>Client ID: {clientId}</Text>
-      <Text style={styles.debugText}>API URL: {API_BASE_URL}</Text>
-      <Text style={styles.debugText}>Connection: {connectionStatus}</Text>
-      <Text style={styles.debugText}>Bills Count: {bills.length}</Text>
-      <Text style={styles.debugText}>Current Page: {currentPage}</Text>
-      <Text style={styles.debugText}>Has Next Page: {hasNextPage ? 'Yes' : 'No'}</Text>
-      <TouchableOpacity 
-        style={styles.testButton}
-        onPress={() => testConnection()}
-      >
-        <Text style={styles.testButtonText}>Test Connection</Text>
-      </TouchableOpacity>
-      <TouchableOpacity 
-        style={[styles.testButton, { backgroundColor: '#28a745' }]}
-        onPress={() => fetchBills(1, statusFilter, true)}
-      >
-        <Text style={styles.testButtonText}>Force Refresh</Text>
-      </TouchableOpacity>
-    </View>
-  );
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+  };
 
-  // Bill item component
-  const BillItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.billItem}
-      onPress={() => fetchBillDetails(item.id)}
-    >
-      <View style={styles.billHeader}>
-        <Text style={styles.billNumber}>{item.billNumber}</Text>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
-          <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
-        </View>
-      </View>
-      
-      <View style={styles.billContent}>
-        <Text style={styles.billAmount}>{formatCurrency(item.amount)}</Text>
-        <Text style={styles.billDate}>Sent: {formatDate(item.sentAt)}</Text>
-        {item.dueDate && (
-          <Text style={styles.dueDate}>Due: {formatDate(item.dueDate)}</Text>
-        )}
-        {item.order && (
-          <Text style={styles.orderName}>{item.order.name}</Text>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
+  const makePhoneCall = (phoneNumber) => {
+    Linking.openURL(`tel:${phoneNumber}`);
+  };
 
-  // Filter buttons component
-  const FilterButtons = () => (
-    <View style={styles.filterContainer}>
-      <TouchableOpacity
-        style={[styles.filterButton, statusFilter === 'all' && styles.activeFilter]}
-        onPress={() => handleStatusFilterChange('all')}
-      >
-        <Text style={[styles.filterText, statusFilter === 'all' && styles.activeFilterText]}>
-          All
-        </Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.filterButton, statusFilter === 'payment_pending' && styles.activeFilter]}
-        onPress={() => handleStatusFilterChange('payment_pending')}
-      >
-        <Text style={[styles.filterText, statusFilter === 'payment_pending' && styles.activeFilterText]}>
-          Pending
-        </Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.filterButton, statusFilter === 'complete' && styles.activeFilter]}
-        onPress={() => handleStatusFilterChange('complete')}
-      >
-        <Text style={[styles.filterText, statusFilter === 'complete' && styles.activeFilterText]}>
-          Completed
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  // Bill details modal
-  const BillDetailsModal = () => (
-    <Modal
-      visible={showBillDetails}
-      animationType="slide"
-      presentationStyle="pageSheet"
-    >
-      <SafeAreaView style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Bill Details</Text>
-          <TouchableOpacity onPress={() => setShowBillDetails(false)}>
-            <Text style={styles.closeButton}>Close</Text>
-          </TouchableOpacity>
-        </View>
-        
-        {selectedBill && (
-          <ScrollView style={styles.modalContent}>
-            <View style={styles.billDetailCard}>
-              <Text style={styles.billDetailNumber}>{selectedBill.billNumber}</Text>
-              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedBill.status) }]}>
-                <Text style={styles.statusText}>{getStatusText(selectedBill.status)}</Text>
-              </View>
-            </View>
-            
-            <View style={styles.detailSection}>
-              <Text style={styles.sectionTitle}>Amount</Text>
-              <Text style={styles.amountText}>{formatCurrency(selectedBill.amount)}</Text>
-            </View>
-            
-            <View style={styles.detailSection}>
-              <Text style={styles.sectionTitle}>Dates</Text>
-              <Text style={styles.detailText}>Sent: {formatDate(selectedBill.sentAt)}</Text>
-              {selectedBill.dueDate && (
-                <Text style={styles.detailText}>Due: {formatDate(selectedBill.dueDate)}</Text>
-              )}
-              {selectedBill.paidAt && (
-                <Text style={styles.detailText}>Paid: {formatDate(selectedBill.paidAt)}</Text>
-              )}
-            </View>
-            
-            {selectedBill.order && (
-              <View style={styles.detailSection}>
-                <Text style={styles.sectionTitle}>Order Details</Text>
-                <Text style={styles.detailText}>Item: {selectedBill.order.name}</Text>
-                <Text style={styles.detailText}>
-                  Quantity: {selectedBill.order.quantity} {selectedBill.order.unit}
-                </Text>
-                <Text style={styles.detailText}>
-                  Unit Price: {formatCurrency(selectedBill.order.unitPrice)}
-                </Text>
-                {selectedBill.order.description && (
-                  <Text style={styles.detailText}>Description: {selectedBill.order.description}</Text>
-                )}
-                {selectedBill.order.vehicleName && (
-                  <Text style={styles.detailText}>Vehicle: {selectedBill.order.vehicleName}</Text>
-                )}
-                {selectedBill.order.vehicleNumber && (
-                  <Text style={styles.detailText}>Vehicle Number: {selectedBill.order.vehicleNumber}</Text>
-                )}
-              </View>
-            )}
-            
-            {selectedBill.additionalNotes && (
-              <View style={styles.detailSection}>
-                <Text style={styles.sectionTitle}>Additional Notes</Text>
-                <Text style={styles.detailText}>{selectedBill.additionalNotes}</Text>
-              </View>
-            )}
-            
-            {selectedBill.paymentMethod && (
-              <View style={styles.detailSection}>
-                <Text style={styles.sectionTitle}>Payment Information</Text>
-                <Text style={styles.detailText}>Method: {selectedBill.paymentMethod}</Text>
-                {selectedBill.transactionId && (
-                  <Text style={styles.detailText}>Transaction ID: {selectedBill.transactionId}</Text>
-                )}
-                {selectedBill.paymentNotes && (
-                  <Text style={styles.detailText}>Notes: {selectedBill.paymentNotes}</Text>
-                )}
-              </View>
-            )}
-            
-            {selectedBill.order?.image1 && (
-              <View style={styles.detailSection}>
-                <Text style={styles.sectionTitle}>Images</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {selectedBill.order.image1 && (
-                    <Image
-                      source={{ uri: `${API_BASE_URL}${selectedBill.order.image1}` }}
-                      style={styles.orderImage}
-                    />
-                  )}
-                  {selectedBill.order.image2 && (
-                    <Image
-                      source={{ uri: `${API_BASE_URL}${selectedBill.order.image2}` }}
-                      style={styles.orderImage}
-                    />
-                  )}
-                  {selectedBill.order.image3 && (
-                    <Image
-                      source={{ uri: `${API_BASE_URL}${selectedBill.order.image3}` }}
-                      style={styles.orderImage}
-                    />
-                  )}
-                </ScrollView>
-              </View>
-            )}
-            
-            {selectedBill.status === 'payment_pending' && (
-              <TouchableOpacity
-                style={styles.paymentButton}
-                onPress={() => setShowPaymentModal(true)}
-              >
-                <Text style={styles.paymentButtonText}>Mark as Paid</Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-        )}
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007bff" />
+        <Text style={styles.loadingText}>Loading bills...</Text>
       </SafeAreaView>
-    </Modal>
-  );
+    );
+  }
 
-  // Payment modal
-  const PaymentModal = () => (
-    <Modal
-      visible={showPaymentModal}
-      animationType="slide"
-      transparent={true}
-    >
-      <View style={styles.paymentModalOverlay}>
-        <View style={styles.paymentModalContent}>
-          <Text style={styles.paymentModalTitle}>Mark Payment as Complete</Text>
-          
-          <TextInput
-            style={styles.paymentInput}
-            placeholder="Payment Method (e.g., Cash, UPI, Bank Transfer)"
-            value={paymentData.paymentMethod}
-            onChangeText={(text) => setPaymentData({...paymentData, paymentMethod: text})}
-          />
-          
-          <TextInput
-            style={styles.paymentInput}
-            placeholder="Transaction ID (optional)"
-            value={paymentData.transactionId}
-            onChangeText={(text) => setPaymentData({...paymentData, transactionId: text})}
-          />
-          
-          <TextInput
-            style={[styles.paymentInput, styles.paymentNotesInput]}
-            placeholder="Payment Notes (optional)"
-            value={paymentData.paymentNotes}
-            onChangeText={(text) => setPaymentData({...paymentData, paymentNotes: text})}
-            multiline
-            numberOfLines={3}
-          />
-          
-          <View style={styles.paymentModalButtons}>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => setShowPaymentModal(false)}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.confirmButton}
-              onPress={markPaymentComplete}
-              disabled={processingPayment}
-            >
-              {processingPayment ? (
-                <ActivityIndicator color="#ffffff" size="small" />
-              ) : (
-                <Text style={styles.confirmButtonText}>Confirm Payment</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-
-  // Initial load
-  useEffect(() => {
-    // Add a small delay to ensure component is mounted
-    const timer = setTimeout(() => {
-      fetchBills(1, statusFilter);
-    }, 100);
-
-    return () => clearTimeout(timer);
-  }, [statusFilter]);
-
-  // Main render
   return (
     <SafeAreaView style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>My Bills</Text>
-        <Text style={styles.subtitle}>Total: {totalBills}</Text>
-      </View>
-      
-      <DebugInfo />
-      
-      <FilterButtons />
-      
-      {loading && bills.length === 0 ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading bills...</Text>
-          <Text style={styles.loadingSubtext}>Connection: {connectionStatus}</Text>
+        <View style={styles.headerContent}>
+          <View style={styles.userInfo}>
+            <Text style={styles.welcomeText}>Welcome back,</Text>
+            <Text style={styles.userName}>{user?.fullname || 'User'}</Text>
+          </View>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <Icon name="logout" size={24} color="#fff" />
+          </TouchableOpacity>
         </View>
-      ) : (
-        <FlatList
-          data={bills}
-          renderItem={({ item }) => <BillItem item={item} />}
-          keyExtractor={(item) => item.id.toString()}
-          contentContainerStyle={styles.listContainer}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => fetchBills(1, statusFilter, true)}
-            />
-          }
-          onEndReached={loadMoreBills}
-          onEndReachedThreshold={0.1}
-          ListFooterComponent={
-            hasNextPage && !loading ? (
-              <View style={styles.loadingFooter}>
-                <ActivityIndicator size="small" color="#007AFF" />
-                <Text style={styles.loadingFooterText}>Loading more...</Text>
+      </View>
+
+      <ScrollView
+        style={styles.scrollView}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
+        {/* Stats Cards */}
+        <View style={styles.statsContainer}>
+          <View style={styles.statCard}>
+            <Icon name="receipt" size={24} color="#007bff" />
+            <Text style={styles.statValue}>{stats.totalBills}</Text>
+            <Text style={styles.statLabel}>Total Bills</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Icon name="pending" size={24} color="#ffc107" />
+            <Text style={styles.statValue}>{stats.pendingBills}</Text>
+            <Text style={styles.statLabel}>Pending</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Icon name="check-circle" size={24} color="#28a745" />
+            <Text style={styles.statValue}>{stats.successfulBills}</Text>
+            <Text style={styles.statLabel}>Paid</Text>
+          </View>
+        </View>
+
+        <View style={styles.amountContainer}>
+          <View style={styles.amountCard}>
+            <Text style={styles.amountLabel}>Total Amount</Text>
+            <Text style={styles.amountValue}>₹{stats.totalAmount.toFixed(2)}</Text>
+          </View>
+          <View style={styles.amountCard}>
+            <Text style={styles.amountLabel}>Pending Amount</Text>
+            <Text style={[styles.amountValue, styles.pendingAmount]}>₹{stats.pendingAmount.toFixed(2)}</Text>
+          </View>
+        </View>
+
+        {/* Contact Support */}
+        <View style={styles.supportContainer}>
+          <Text style={styles.supportTitle}>Need Help?</Text>
+          <TouchableOpacity 
+            style={styles.supportButton}
+            onPress={() => makePhoneCall('+919876543210')}
+          >
+            <Icon name="phone" size={20} color="#007bff" />
+            <Text style={styles.supportText}>Contact Support</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Bills List */}
+        <View style={styles.billsSection}>
+          <Text style={styles.sectionTitle}>Your Bills</Text>
+          
+          {bills.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Icon name="receipt-long" size={48} color="#ccc" />
+              <Text style={styles.emptyStateText}>No bills found</Text>
+              <Text style={styles.emptyStateSubtext}>Your bills will appear here once created</Text>
+            </View>
+          ) : (
+            bills.map((bill) => (
+              <TouchableOpacity
+                key={bill.id}
+                style={styles.billCard}
+                onPress={() => handleBillPress(bill)}
+              >
+                <View style={styles.billHeader}>
+                  <View style={styles.billInfo}>
+                    <Text style={styles.billNumber}>{bill.billNumber}</Text>
+                    <Text style={styles.materialName}>{bill.materialName}</Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(bill.paymentStatus) }]}>
+                    <Text style={styles.statusText}>{getStatusText(bill.paymentStatus)}</Text>
+                  </View>
+                </View>
+                
+                <View style={styles.billDetails}>
+                  <View style={styles.billDetailRow}>
+                    <Text style={styles.billDetailLabel}>Quantity:</Text>
+                    <Text style={styles.billDetailValue}>{bill.quantity} {bill.unit}</Text>
+                  </View>
+                  <View style={styles.billDetailRow}>
+                    <Text style={styles.billDetailLabel}>Amount:</Text>
+                    <Text style={styles.billDetailValue}>₹{parseFloat(bill.totalAmount || 0).toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.billDetailRow}>
+                    <Text style={styles.billDetailLabel}>Date:</Text>
+                    <Text style={styles.billDetailValue}>{formatDate(bill.sentAt)}</Text>
+                  </View>
+                  {bill.dueDate && (
+                    <View style={styles.billDetailRow}>
+                      <Text style={styles.billDetailLabel}>Due Date:</Text>
+                      <Text style={styles.billDetailValue}>{formatDate(bill.dueDate)}</Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.billFooter}>
+                  <Icon name="chevron-right" size={20} color="#007bff" />
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Bill Detail Modal */}
+      <Modal
+        visible={!!selectedBill}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Bill Details</Text>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setSelectedBill(null)}
+            >
+              <Icon name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            {selectedBill && (
+              <>
+                <View style={styles.billDetailSection}>
+                  <Text style={styles.detailSectionTitle}>Bill Information</Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Bill Number:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.billNumber}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Material:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.materialName}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Description:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.description || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Status:</Text>
+                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedBill.paymentStatus) }]}>
+                      <Text style={styles.statusText}>{getStatusText(selectedBill.paymentStatus)}</Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.billDetailSection}>
+                  <Text style={styles.detailSectionTitle}>Quantity & Pricing</Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Quantity:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.quantity} {selectedBill.unit}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Unit Price:</Text>
+                    <Text style={styles.detailValue}>₹{parseFloat(selectedBill.unitPrice || 0).toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Subtotal:</Text>
+                    <Text style={styles.detailValue}>₹{parseFloat(selectedBill.subtotal || 0).toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Discount:</Text>
+                    <Text style={styles.detailValue}>₹{parseFloat(selectedBill.discountAmount || 0).toFixed(2)} ({selectedBill.discountPercentage || 0}%)</Text>
+                  </View>
+                  <View style={[styles.detailRow, styles.totalRow]}>
+                    <Text style={styles.totalLabel}>Total Amount:</Text>
+                    <Text style={styles.totalValue}>₹{parseFloat(selectedBill.totalAmount || 0).toFixed(2)}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.billDetailSection}>
+                  <Text style={styles.detailSectionTitle}>Delivery Information</Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Address:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.deliveryAddress || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Pincode:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.pincode || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Vehicle:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.vehicleName || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Vehicle Number:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.vehicleNumber || 'N/A'}</Text>
+                  </View>
+                </View>
+
+                {selectedBill.paymentStatus === 'successful' && (
+                  <View style={styles.billDetailSection}>
+                    <Text style={styles.detailSectionTitle}>Payment Information</Text>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Payment Method:</Text>
+                      <Text style={styles.detailValue}>{selectedBill.paymentMethod || 'N/A'}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Transaction ID:</Text>
+                      <Text style={styles.detailValue}>{selectedBill.transactionId || 'N/A'}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Payment Date:</Text>
+                      <Text style={styles.detailValue}>{formatDate(selectedBill.paymentDate)}</Text>
+                    </View>
+                  </View>
+                )}
+
+                {selectedBill.additionalNotes && (
+                  <View style={styles.billDetailSection}>
+                    <Text style={styles.detailSectionTitle}>Additional Notes</Text>
+                    <Text style={styles.notesText}>{selectedBill.additionalNotes}</Text>
+                  </View>
+                )}
+
+                {selectedBill.paymentStatus === 'pending' && (
+                  <TouchableOpacity
+                    style={styles.payButton}
+                    onPress={() => setShowPaymentModal(true)}
+                  >
+                    <Icon name="payment" size={20} color="#fff" />
+                    <Text style={styles.payButtonText}>Mark as Paid</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Payment Modal */}
+      <Modal
+        visible={showPaymentModal}
+        animationType="slide"
+        presentationStyle="formSheet"
+      >
+        <SafeAreaView style={styles.paymentModalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Payment Details</Text>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setShowPaymentModal(false)}
+            >
+              <Icon name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.paymentForm}>
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Payment Method *</Text>
+              <View style={styles.paymentMethodContainer}>
+                {paymentMethods.map((method) => (
+                  <TouchableOpacity
+                    key={method}
+                    style={[
+                      styles.paymentMethodButton,
+                      paymentData.paymentMethod === method && styles.selectedPaymentMethod
+                    ]}
+                    onPress={() => setPaymentData({...paymentData, paymentMethod: method})}
+                  >
+                    <Text style={[
+                      styles.paymentMethodText,
+                      paymentData.paymentMethod === method && styles.selectedPaymentMethodText
+                    ]}>
+                      {method}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
               </View>
-            ) : null
-          }
-          ListEmptyComponent={
-            !loading ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No bills found</Text>
-                <Text style={styles.emptySubtext}>
-                  {statusFilter === 'all' 
-                    ? 'You don\'t have any bills yet' 
-                    : `No ${statusFilter === 'payment_pending' ? 'pending' : 'completed'} bills found`}
-                </Text>
-                <Text style={styles.emptySubtext}>Connection: {connectionStatus}</Text>
-              </View>
-            ) : null
-          }
-        />
-      )}
-      
-      <BillDetailsModal />
-      <PaymentModal />
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Transaction ID</Text>
+              <TextInput
+                style={styles.textInput}
+                value={paymentData.transactionId}
+                onChangeText={(text) => setPaymentData({...paymentData, transactionId: text})}
+                placeholder="Enter transaction ID (optional)"
+                placeholderTextColor="#999"
+              />
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Payment Notes</Text>
+              <TextInput
+                style={[styles.textInput, styles.textArea]}
+                value={paymentData.paymentNotes}
+                onChangeText={(text) => setPaymentData({...paymentData, paymentNotes: text})}
+                placeholder="Enter any additional notes (optional)"
+                placeholderTextColor="#999"
+                multiline
+                numberOfLines={3}
+              />
+            </View>
+
+            <TouchableOpacity style={styles.confirmPaymentButton} onPress={handlePayment}>
+              <Text style={styles.confirmPaymentText}>Confirm Payment</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -690,182 +686,231 @@ const CustomerScreen = ({ clientId }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  header: {
-    backgroundColor: '#ffffff',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333333',
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#666666',
-    marginTop: 4,
-  },
-  debugInfo: {
-    backgroundColor: '#fff3cd',
-    padding: 10,
-    margin: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ffeaa7',
-  },
-  debugText: {
-    fontSize: 12,
-    color: '#856404',
-    marginBottom: 2,
-  },
-  testButton: {
-    backgroundColor: '#007AFF',
-    padding: 8,
-    borderRadius: 6,
-    marginTop: 5,
-    marginBottom: 2,
-    alignItems: 'center',
-  },
-  testButtonText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  filterContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  filterButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 10,
-    backgroundColor: '#f0f0f0',
-  },
-  activeFilter: {
-    backgroundColor: '#007AFF',
-  },
-  filterText: {
-    fontSize: 14,
-    color: '#666666',
-    fontWeight: '500',
-  },
-  activeFilterText: {
-    color: '#ffffff',
-  },
-  listContainer: {
-    padding: 20,
-  },
-  billItem: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  billHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  billNumber: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333333',
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#ffffff',
-  },
-  billContent: {
-    gap: 4,
-  },
-  billAmount: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#007AFF',
-  },
-  billDate: {
-    fontSize: 14,
-    color: '#666666',
-  },
-  dueDate: {
-    fontSize: 14,
-    color: '#ff6b6b',
-  },
-  orderName: {
-    fontSize: 14,
-    color: '#333333',
-    fontWeight: '500',
+    backgroundColor: '#f5f5f5'
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#f5f5f5'
   },
   loadingText: {
     marginTop: 10,
     fontSize: 16,
-    color: '#666666',
+    color: '#666'
   },
-  loadingSubtext: {
-    marginTop: 5,
-    fontSize: 12,
-    color: '#999999',
+  header: {
+    backgroundColor: '#007bff',
+    paddingTop: 10,
+    paddingBottom: 20,
+    paddingHorizontal: 20
   },
-  loadingFooter: {
+  headerContent: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 20,
+    justifyContent: 'space-between',
+    alignItems: 'center'
   },
-  loadingFooterText: {
-    marginLeft: 10,
+  userInfo: {
+    flex: 1
+  },
+  welcomeText: {
+    color: '#fff',
     fontSize: 14,
-    color: '#666666',
+    opacity: 0.9
   },
-  emptyContainer: {
+  userName: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold'
+  },
+  logoutButton: {
+    padding: 8
+  },
+  scrollView: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 50,
+    padding: 20
   },
-  emptyText: {
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20
+  },
+  statCard: {
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 5
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 5
+  },
+  amountContainer: {
+    flexDirection: 'row',
+    marginBottom: 20
+  },
+  amountCard: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 10,
+    flex: 1,
+    marginHorizontal: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
+  },
+  amountLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5
+  },
+  amountValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333'
+  },
+  pendingAmount: {
+    color: '#ffc107'
+  },
+  supportContainer: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 10,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
+  },
+  supportTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10
+  },
+  supportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10
+  },
+  supportText: {
+    fontSize: 16,
+    color: '#007bff',
+    marginLeft: 10,
+    fontWeight: '500'
+  },
+  billsSection: {
+    marginBottom: 20
+  },
+  sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#666666',
-    textAlign: 'center',
+    color: '#333',
+    marginBottom: 15
   },
-  emptySubtext: {
+  emptyState: {
+    backgroundColor: '#fff',
+    padding: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
+  },
+  emptyStateText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#666',
+    marginTop: 15
+  },
+  emptyStateSubtext: {
     fontSize: 14,
-    color: '#999999',
-    textAlign: 'center',
-    marginTop: 8,
+    color: '#999',
+    marginTop: 5,
+    textAlign: 'center'
+  },
+  billCard: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 10,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
+  },
+  billHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 15
+  },
+  billInfo: {
+    flex: 1
+  },
+  billNumber: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333'
+  },
+  materialName: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2
+  },
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20
+  },
+  statusText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+  billDetails: {
+    marginBottom: 15
+  },
+  billDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 5
+  },
+  billDetailLabel: {
+    fontSize: 14,
+    color: '#666'
+  },
+  billDetailValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500'
+  },
+  billFooter: {
+    alignItems: 'flex-end'
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#fff'
   },
   modalHeader: {
     flexDirection: 'row',
@@ -873,134 +918,150 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: '#eee'
   },
   modalTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
-    color: '#333333',
+    color: '#333'
   },
   closeButton: {
-    fontSize: 16,
-    color: '#007AFF',
-    fontWeight: '600',
+    padding: 5
   },
   modalContent: {
     flex: 1,
-    padding: 20,
+    padding: 20
   },
-  billDetailCard: {
+  billDetailSection: {
+    marginBottom: 25
+  },
+  detailSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 15
+  },
+  detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0'
   },
-  billDetailNumber: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333333',
-  },
-  detailSection: {
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 8,
-  },
-  amountText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#007AFF',
-  },
-  detailText: {
+  detailLabel: {
     fontSize: 14,
-    color: '#666666',
-    marginBottom: 4,
+    color: '#666',
+    flex: 1
   },
-  orderImage: {
-    width: 200,
-    height: 200,
-    borderRadius: 8,
-    marginRight: 10,
-  },
-  paymentButton: {
-    backgroundColor: '#007AFF',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  paymentButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  paymentModalOverlay: {
+  detailValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    textAlign: 'right'
   },
-  paymentModalContent: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 20,
-    width: width * 0.9,
-    maxWidth: 400,
+  totalRow: {
+    borderTopWidth: 2,
+    borderTopColor: '#007bff',
+    marginTop: 10,
+    paddingTop: 10
   },
-  paymentModalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333333',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  paymentInput: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 12,
+  totalLabel: {
     fontSize: 16,
-    marginBottom: 12,
-    backgroundColor: '#f9f9f9',
+    fontWeight: 'bold',
+    color: '#333'
   },
-  paymentNotesInput: {
-    height: 80,
-    textAlignVertical: 'top',
+  totalValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#007bff'
   },
-  paymentModalButtons: {
+  notesText: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20
+  },
+  payButton: {
+    backgroundColor: '#28a745',
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 20,
-  },
-  cancelButton: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 8,
     alignItems: 'center',
-    marginRight: 10,
-    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 10,
+    marginTop: 20
   },
-  cancelButtonText: {
-    color: '#666666',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  confirmButton: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginLeft: 10,
-    backgroundColor: '#007AFF',
-  },
-  confirmButtonText: {
-    color: '#ffffff',
+  payButtonText: {
+    color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+    marginLeft: 10
   },
+  paymentModalContainer: {
+    flex: 1,
+    backgroundColor: '#fff'
+  },
+  paymentForm: {
+    flex: 1,
+    padding: 20
+  },
+  inputContainer: {
+    marginBottom: 20
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 10
+  },
+  paymentMethodContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10
+  },
+  paymentMethodButton: {
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#fff'
+  },
+  selectedPaymentMethod: {
+    backgroundColor: '#007bff',
+    borderColor: '#007bff'
+  },
+  paymentMethodText: {
+    fontSize: 14,
+    color: '#666'
+  },
+  selectedPaymentMethodText: {
+    color: '#fff'
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fff'
+  },
+  textArea: {
+    height: 80,
+    textAlignVertical: 'top'
+  },
+  confirmPaymentButton: {
+    backgroundColor: '#28a745',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 20
+  },
+  confirmPaymentText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold'
+  }
 });
 
 export default CustomerScreen;

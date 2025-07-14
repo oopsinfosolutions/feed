@@ -7,11 +7,23 @@ const SignUp = require('./models/signup');
 const Material = require('./models/shipmentorder');
 const path = require("path");
 const fs = require('fs');
+const Bill = require('./models/bill');
 require("dotenv").config();
 
 
+Bill.belongsTo(SignUp, { foreignKey: 'clientId', as: 'Client' });
+Bill.belongsTo(Material, { foreignKey: 'orderId', as: 'Order' });
+Bill.belongsTo(SignUp, { foreignKey: 'createdBy', as: 'Creator' });
+
+SignUp.hasMany(Bill, { foreignKey: 'clientId', as: 'Bills' });
+Material.hasOne(Bill, { foreignKey: 'orderId', as: 'Bill' });
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+
+
+
 
 // Multer configuration for file uploads
 const storage = multer.diskStorage({
@@ -23,6 +35,58 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage });
+
+
+
+// =================================================================
+// HELPER FUNCTIONS - Add these after middleware setup
+// =================================================================
+
+// Helper function for generating user ID (existing function)
+async function generateUserId() {
+  while (true) {
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 1000);
+    const id = `USER_${timestamp}_${random}`;
+    const existing = await SignUp.findOne({ where: { user_id: id } });
+    if (!existing) return id;
+  }
+}
+
+// Generate unique product user ID
+function generateProductUserId() {
+  const timestamp = Date.now();
+  const random = Math.floor(Math.random() * 1000);
+  return `PROD_${timestamp}_${random}`;
+}
+
+// Generate unique order ID
+function generateOrderId() {
+  const timestamp = Date.now();
+  const randomNum = Math.floor(Math.random() * 1000);
+  return `ORDER_${timestamp}_${randomNum}`;
+}
+
+// Generate product ID (for orderId field)
+function generateProductId() {
+  const timestamp = Date.now();
+  const random = Math.floor(Math.random() * 1000);
+  return `ORD_${timestamp}_${random}`;
+}
+
+// Generate bill number
+function generateBillNumber() {
+  const timestamp = Date.now();
+  const random = Math.floor(Math.random() * 1000);
+  return `BILL-${timestamp}-${random}`;
+}
+
+// =================================================================
+// ROUTES START HERE
+// =================================================================
+
+
+
 
 // Middleware
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -41,96 +105,87 @@ async function generateUserId() {
   }
 }
 
-// AUTH ROUTES
-// Signup Route - Compatible with Users.js component
+// Signup Route - Updated
 app.post('/signup', async (req, res) => {
   try {
-    console.log("req.body ===>", req.body);
-
     const { fullname, email, password, phone, type } = req.body;
 
-    if (!fullname || !email || !password || !phone) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'All fields are required',
-        error: 'All fields are required' 
-      });
-    }
-
-    // Email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Please enter a valid email address!',
-        error: 'Please enter a valid email address!' 
-      });
-    }
-
-    // Phone validation
-    if (phone.length < 10) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Please enter a valid phone number!',
-        error: 'Please enter a valid phone number!' 
-      });
-    }
-
-    // Password validation
-    if (password.length < 6) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Password must be at least 6 characters long!',
-        error: 'Password must be at least 6 characters long!' 
-      });
-    }
-
-    // Check if email already exists
-    const existingUser = await SignUp.findOne({ where: { email } });
-    if (existingUser) {
-      return res.status(409).json({ 
-        success: false,
-        message: 'Email already exists!',
-        error: 'Email already exists!' 
-      });
+    if (!fullname || !email || !phone || !password || !type) {
+      return res.status(400).json({ error: 'All fields are required' });
     }
 
     const user_id = await generateUserId();
 
-    const user = await SignUp.create({
-      fullname, 
+    let userData = {
+      fullname,
       email,
       password,
       phone,
-      type: type || 'client',
-      user_id
-    });
+      type,
+      user_id,
+    };
 
-    res.status(201).json({ 
-      success: true,
-      message: 'User registered successfully', 
-      user,
-      data: user
-    });
+    // Define employee types that need approval (excluding admin and client)
+    const employeeTypesNeedingApproval = ['employee', 'officeemp', 'sale_parchase'];
+    
+    // If user is an employee type, mark as not approved
+    if (employeeTypesNeedingApproval.includes(type.toLowerCase())) {
+      userData.isApproved = false;
+      userData.status = 'pending';
+    } else {
+      // Admin, client, dealer get automatic approval
+      userData.isApproved = true;
+      userData.status = 'approved';
+    }
+
+    const user = await SignUp.create(userData);
+
+    if (userData.status === 'pending') {
+      return res.json({ message: 'Signup request sent to admin for approval', user });
+    }
+
+    res.json({ message: 'User registered successfully', user });
   } catch (error) {
     console.error('Signup Error:', error);
-    
-    // Handle Sequelize unique constraint errors
-    if (error.name === 'SequelizeUniqueConstraintError') {
-      return res.status(409).json({ 
-        success: false,
-        message: 'Email or User ID already exists!',
-        error: 'Email or User ID already exists!'
-      });
-    }
-    
-    res.status(500).json({ 
-      success: false,
-      message: 'Something went wrong',
-      error: 'Something went wrong' 
-    });
+    res.status(500).json({ error: 'Something went wrong' });
   }
 });
+
+// Login Route - Updated
+app.post('/login', async (req, res) => {
+  try {
+    const { phone, password } = req.body;
+
+    if (!phone || !password) {
+      return res.status(400).json({ error: 'Phone and password are required' });
+    }
+
+    const user = await SignUp.findOne({ where: { phone, password } });
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Define employee types that need approval (excluding admin and client)
+    const employeeTypesNeedingApproval = ['employee', 'officeemp', 'sale_parchase'];
+    
+    // Only check approval status for employee types, not for admin/client/dealer
+    if (employeeTypesNeedingApproval.includes(user.type.toLowerCase()) && !user.isApproved) {
+      return res.status(401).json({ error: 'Your account is pending approval' });
+    }
+
+    const { password: _, ...userWithoutPassword } = user.toJSON();
+    res.json(userWithoutPassword);
+  } catch (error) {
+    console.error('Login Error:', error);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+
+
+
+// AUTH ROUTES
+
 
 // Get Users Route - Compatible with Users.js component
 app.get('/Users', async (req, res) => {
@@ -307,28 +362,379 @@ app.delete('/users/:userId', async (req, res) => {
   }
 });
 
-// Login Route
-app.post('/login', async (req, res) => {
+
+
+
+// Add these routes to your server.js file after the existing user management routes
+
+// =================================================================
+// EMPLOYEE APPROVAL ROUTES
+// =================================================================
+
+// GET: Fetch pending approval requests (for admin)
+app.get('/api/admin/pending-approvals', async (req, res) => {
   try {
-    const { phone, password } = req.body;
+    const pendingUsers = await SignUp.findAll({
+      where: {
+        [Op.or]: [
+          { isApproved: false },
+          { isApproved: null }
+        ],
+        [Op.or]: [
+          { status: 'pending' },
+          { status: 'Pending' }
+        ],
+        type: {
+          [Op.in]: ['employee', 'officeemp', 'sale_parchase'] // FIXED: Using correct spelling
+        }
+      },
+      order: [['id', 'DESC']],
+      attributes: ['id', 'fullname', 'email', 'phone', 'type', 'user_id', 'status', 'isApproved']
+    });
 
-    if (!phone || !password) {
-      return res.status(400).json({ error: 'Phone and password are required' });
-    }
+    console.log('Found pending users:', pendingUsers.length);
+    console.log('Pending users data:', pendingUsers.map(u => ({
+      id: u.id,
+      fullname: u.fullname,
+      type: u.type,
+      status: u.status,
+      isApproved: u.isApproved
+    })));
 
-    const user = await SignUp.findOne({ where: { phone, password } });
-
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const { password: _, ...userWithoutPassword } = user.toJSON();
-    res.json(userWithoutPassword);
+    res.status(200).json({
+      success: true,
+      message: 'Pending approval requests fetched successfully',
+      data: pendingUsers
+    });
   } catch (error) {
-    console.error('Login Error:', error);
-    res.status(500).json({ error: 'Something went wrong' });
+    console.error('Error fetching pending approvals:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
   }
 });
+
+// POST: Approve employee signup request
+app.post('/api/admin/approve-user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Find the user by ID or user_id
+    const user = await SignUp.findOne({
+      where: {
+        [Op.or]: [
+          { id: userId },
+          { user_id: userId }
+        ]
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if user is eligible for approval
+    if (user.isApproved) {
+      return res.status(400).json({
+        success: false,
+        message: 'User is already approved'
+      });
+    }
+
+    // Update user approval status - only update basic fields
+    const updatedUser = await user.update({
+      isApproved: true,
+      status: 'approved'
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'User approved successfully',
+      data: updatedUser
+    });
+  } catch (error) {
+    console.error('Error approving user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// POST: Reject employee signup request (SIMPLE VERSION)
+app.post('/api/admin/reject-user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Find the user by ID or user_id
+    const user = await SignUp.findOne({
+      where: {
+        [Op.or]: [
+          { id: userId },
+          { user_id: userId }
+        ]
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if user is eligible for rejection
+    if (user.isApproved) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot reject an already approved user'
+      });
+    }
+
+    // Update user rejection status - only update status field
+    const updatedUser = await user.update({
+      status: 'rejected'
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'User rejected successfully',
+      data: updatedUser
+    });
+  } catch (error) {
+    console.error('Error rejecting user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// GET: Get approval statistics for admin dashboard
+app.get('/api/admin/approval-stats', async (req, res) => {
+  try {
+    const totalPending = await SignUp.count({
+      where: {
+        [Op.or]: [
+          { isApproved: false },
+          { isApproved: null }
+        ],
+        [Op.or]: [
+          { status: 'pending' },
+          { status: 'Pending' }
+        ],
+        type: {
+          [Op.in]: ['employee', 'officeemp', 'sale_parchase'] // FIXED: Using correct spelling
+        }
+      }
+    });
+
+    const totalApproved = await SignUp.count({
+      where: {
+        isApproved: true,
+        [Op.or]: [
+          { status: 'approved' },
+          { status: 'Approved' }
+        ],
+        type: {
+          [Op.in]: ['employee', 'officeemp', 'sale_parchase'] // FIXED: Using correct spelling
+        }
+      }
+    });
+
+    const totalRejected = await SignUp.count({
+      where: {
+        [Op.or]: [
+          { status: 'rejected' },
+          { status: 'Rejected' }
+        ],
+        type: {
+          [Op.in]: ['employee', 'officeemp', 'sale_parchase'] // FIXED: Using correct spelling
+        }
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalPending,
+        totalApproved,
+        totalRejected
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching approval stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// GET: Get user approval history (for admin)
+app.get('/api/admin/approval-history', async (req, res) => {
+  try {
+    const { page = 1, limit = 50, status } = req.query;
+    const offset = (page - 1) * limit;
+
+    let whereClause = {
+      type: {
+        // Updated to match the actual format in your database
+        [Op.in]: ['employee', 'officeemp', 'sale_purchase', 'Sale Parchase', 'sale_parchase']
+      }
+    };
+
+    if (status && status !== 'all') {
+      whereClause.status = status;
+    }
+
+    const { count, rows: users } = await SignUp.findAndCountAll({
+      where: whereClause,
+      order: [['id', 'DESC']], // Using id instead of createdAt
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      attributes: [
+        'id', 'fullname', 'email', 'phone', 'type', 'user_id', 
+        'status', 'isApproved', 'approvedBy'
+      ]
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Approval history fetched successfully',
+      data: {
+        users,
+        pagination: {
+          total: count,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(count / limit),
+          hasNext: offset + users.length < count,
+          hasPrev: page > 1
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching approval history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// PATCH: Bulk approve/reject users
+app.patch('/api/admin/bulk-approval', async (req, res) => {
+  try {
+    const { userIds, action, adminId, note } = req.body;
+
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'User IDs array is required'
+      });
+    }
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action must be either "approve" or "reject"'
+      });
+    }
+
+    let updateData = {};
+    
+    if (action === 'approve') {
+      updateData = {
+        isApproved: true,
+        status: 'approved',
+        approvedBy: adminId || 'admin'
+      };
+    } else {
+      updateData = {
+        status: 'rejected'
+      };
+    }
+
+    const [updatedCount] = await SignUp.update(updateData, {
+      where: {
+        [Op.or]: [
+          { id: { [Op.in]: userIds } },
+          { user_id: { [Op.in]: userIds } }
+        ],
+        [Op.or]: [
+          { isApproved: false },
+          { isApproved: null }
+        ],
+        [Op.or]: [
+          { status: 'pending' },
+          { status: 'Pending' }
+        ]
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully ${action}d ${updatedCount} users`,
+      updatedCount
+    });
+  } catch (error) {
+    console.error('Error in bulk approval:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// DELETE: Delete rejected user permanently
+app.delete('/api/admin/delete-rejected/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Find the user by ID or user_id
+    const user = await SignUp.findOne({
+      where: {
+        [Op.or]: [
+          { id: userId },
+          { user_id: userId }
+        ],
+        status: 'rejected' // Only allow deletion of rejected users
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Rejected user not found'
+      });
+    }
+
+    await user.destroy();
+
+    res.status(200).json({
+      success: true,
+      message: 'Rejected user deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting rejected user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
 
 // ADMIN ROUTES - MATERIALS
 // GET: Fetch all data with filtering and sorting options - FIXED
@@ -1842,6 +2248,1001 @@ app.get('/both_employees', async (req, res) => {
 
 
 
+
+
+
+
+//............................................................................................
+
+app.post('/api/admin/orders/:orderId/send-bill', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { 
+      clientId, 
+      dueDate, 
+      additionalNotes, 
+      createdBy 
+    } = req.body;
+
+    // Validate required fields
+    if (!clientId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Client ID is required'
+      });
+    }
+
+    // Find the order
+    const order = await Material.findByPk(orderId);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Find the client
+    const client = await SignUp.findByPk(clientId);
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: 'Client not found'
+      });
+    }
+
+    // Check if bill already exists for this order
+    const existingBill = await Bill.findOne({ where: { orderId } });
+    if (existingBill) {
+      return res.status(400).json({
+        success: false,
+        message: 'Bill already exists for this order'
+      });
+    }
+
+    // Calculate amounts
+    const subtotal = parseFloat(order.unitPrice) * parseInt(order.quantity);
+    const discountPercentage = parseFloat(order.offer) || 0;
+    const discountAmount = subtotal * (discountPercentage / 100);
+    const totalAmount = subtotal - discountAmount;
+
+    // Create bill
+    const bill = await Bill.create({
+      billNumber: generateBillNumber(),
+      orderId: order.id,
+      clientId: clientId,
+      materialName: order.name,
+      description: order.description || order.detail,
+      quantity: order.quantity,
+      unit: order.unit,
+      unitPrice: order.unitPrice,
+      subtotal: subtotal,
+      discountPercentage: discountPercentage,
+      discountAmount: discountAmount,
+      totalAmount: totalAmount,
+      deliveryAddress: order.address,
+      pincode: order.pincode,
+      vehicleName: order.vehicleName,
+      vehicleNumber: order.vehicleNumber,
+      paymentStatus: 'pending',
+      dueDate: dueDate ? new Date(dueDate) : null,
+      additionalNotes: additionalNotes,
+      createdBy: createdBy
+    });
+
+    // Update order status to indicate bill has been sent
+    await order.update({ 
+      status: 'bill_sent',
+      c_id: clientId 
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Bill created and sent to client successfully',
+      data: {
+        bill,
+        client: {
+          id: client.id,
+          name: client.fullname,
+          email: client.email,
+          phone: client.phone
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating bill:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// GET: Fetch all bills (Admin view)
+app.get('/api/admin/bills', async (req, res) => {
+  try {
+    const {
+      status,
+      clientId,
+      sortBy = 'createdAt',
+      sortOrder = 'DESC',
+      page = 1,
+      limit = 50,
+      search
+    } = req.query;
+
+    let whereClause = {};
+
+    // Filter by payment status
+    if (status && status !== 'all') {
+      whereClause.paymentStatus = status;
+    }
+
+    // Filter by client
+    if (clientId) {
+      whereClause.clientId = clientId;
+    }
+
+    // Search functionality
+    if (search) {
+      whereClause[Op.or] = [
+        { billNumber: { [Op.iLike]: `%${search}%` } },
+        { materialName: { [Op.iLike]: `%${search}%` } },
+        { '$Client.fullname$': { [Op.iLike]: `%${search}%` } },
+        { '$Client.email$': { [Op.iLike]: `%${search}%` } }
+      ];
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: bills } = await Bill.findAndCountAll({
+      where: whereClause,
+      include: [
+        {
+          model: SignUp,
+          as: 'Client',
+          attributes: ['id', 'fullname', 'email', 'phone']
+        },
+        {
+          model: Material,
+          as: 'Order',
+          attributes: ['id', 'name', 'status']
+        }
+      ],
+      order: [[sortBy, sortOrder]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Bills fetched successfully',
+      data: {
+        bills,
+        pagination: {
+          total: count,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(count / limit),
+          hasNext: offset + bills.length < count,
+          hasPrev: page > 1
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching bills:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// GET: Fetch single bill details (Admin view)
+app.get('/api/admin/bills/:billId', async (req, res) => {
+  try {
+    const { billId } = req.params;
+
+    const bill = await Bill.findByPk(billId, {
+      include: [
+        {
+          model: SignUp,
+          as: 'Client',
+          attributes: ['id', 'fullname', 'email', 'phone']
+        },
+        {
+          model: Material,
+          as: 'Order',
+          attributes: ['id', 'name', 'status', 'image1', 'image2', 'image3']
+        }
+      ]
+    });
+
+    if (!bill) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bill not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Bill details fetched successfully',
+      data: bill
+    });
+
+  } catch (error) {
+    console.error('Error fetching bill details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// PATCH: Update bill payment status (Admin)
+app.patch('/api/admin/bills/:billId/payment', async (req, res) => {
+  try {
+    const { billId } = req.params;
+    const { 
+      paymentStatus, 
+      paymentMethod, 
+      transactionId, 
+      paymentNotes 
+    } = req.body;
+
+    // Validate payment status
+    if (!['pending', 'successful'].includes(paymentStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment status. Must be pending or successful'
+      });
+    }
+
+    const bill = await Bill.findByPk(billId);
+    if (!bill) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bill not found'
+      });
+    }
+
+    const updateData = {
+      paymentStatus,
+      paymentMethod: paymentMethod || bill.paymentMethod,
+      transactionId: transactionId || bill.transactionId,
+      paymentNotes: paymentNotes || bill.paymentNotes
+    };
+
+    // Set payment date if status is successful
+    if (paymentStatus === 'successful') {
+      updateData.paymentDate = new Date();
+    }
+
+    const updatedBill = await bill.update(updateData);
+
+    res.status(200).json({
+      success: true,
+      message: 'Bill payment status updated successfully',
+      data: updatedBill
+    });
+
+  } catch (error) {
+    console.error('Error updating bill payment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// =================================================================
+// CLIENT ROUTES - BILL VIEWING
+// =================================================================
+
+// GET: Fetch client's bills
+app.get('/api/client/bills/:clientId', async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const {
+      status,
+      sortBy = 'createdAt',
+      sortOrder = 'DESC',
+      page = 1,
+      limit = 20
+    } = req.query;
+
+    let whereClause = { clientId };
+
+    // Filter by payment status
+    if (status && status !== 'all') {
+      whereClause.paymentStatus = status;
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: bills } = await Bill.findAndCountAll({
+      where: whereClause,
+      include: [
+        {
+          model: Material,
+          as: 'Order',
+          attributes: ['id', 'name', 'image1', 'image2', 'image3']
+        }
+      ],
+      order: [[sortBy, sortOrder]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Client bills fetched successfully',
+      data: {
+        bills,
+        pagination: {
+          total: count,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(count / limit),
+          hasNext: offset + bills.length < count,
+          hasPrev: page > 1
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching client bills:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// GET: Fetch single bill details for client
+app.get('/api/client/bill/:billId', async (req, res) => {
+  try {
+    const { billId } = req.params;
+    const { clientId } = req.query;
+
+    const whereClause = { id: billId };
+    
+    // Ensure client can only access their own bills
+    if (clientId) {
+      whereClause.clientId = clientId;
+    }
+
+    const bill = await Bill.findOne({
+      where: whereClause,
+      include: [
+        {
+          model: Material,
+          as: 'Order',
+          attributes: ['id', 'name', 'detail', 'image1', 'image2', 'image3']
+        }
+      ]
+    });
+
+    if (!bill) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bill not found or access denied'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Bill details fetched successfully',
+      data: bill
+    });
+
+  } catch (error) {
+    console.error('Error fetching bill details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// PATCH: Client marks payment as complete
+app.patch('/api/client/bill/:billId/payment', async (req, res) => {
+  try {
+    const { billId } = req.params;
+    const { 
+      clientId, 
+      paymentMethod, 
+      transactionId, 
+      paymentNotes 
+    } = req.body;
+
+    // Validate required fields
+    if (!paymentMethod) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment method is required'
+      });
+    }
+
+    const whereClause = { id: billId };
+    
+    // Ensure client can only update their own bills
+    if (clientId) {
+      whereClause.clientId = clientId;
+    }
+
+    const bill = await Bill.findOne({ where: whereClause });
+    
+    if (!bill) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bill not found or access denied'
+      });
+    }
+
+    // Check if bill is already paid
+    if (bill.paymentStatus === 'successful') {
+      return res.status(400).json({
+        success: false,
+        message: 'Bill is already marked as paid'
+      });
+    }
+
+    const updatedBill = await bill.update({
+      paymentStatus: 'successful',
+      paymentMethod,
+      transactionId: transactionId || null,
+      paymentNotes: paymentNotes || null,
+      paymentDate: new Date()
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment marked as completed successfully',
+      data: updatedBill
+    });
+
+  } catch (error) {
+    console.error('Error updating payment status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// =================================================================
+// UTILITY ROUTES
+// =================================================================
+
+// GET: Dashboard statistics for bills
+app.get('/api/admin/bills/stats', async (req, res) => {
+  try {
+    const totalBills = await Bill.count();
+    const pendingBills = await Bill.count({ where: { paymentStatus: 'pending' } });
+    const successfulBills = await Bill.count({ where: { paymentStatus: 'successful' } });
+    
+    const totalRevenue = await Bill.sum('totalAmount', { 
+      where: { paymentStatus: 'successful' } 
+    });
+    
+    const pendingRevenue = await Bill.sum('totalAmount', { 
+      where: { paymentStatus: 'pending' } 
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalBills,
+        pendingBills,
+        successfulBills,
+        totalRevenue: totalRevenue || 0,
+        pendingRevenue: pendingRevenue || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching bill statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+
+function generateBillNumber() {
+  const timestamp = Date.now();
+  const random = Math.floor(Math.random() * 1000);
+  return `BILL-${timestamp}-${random}`;
+}
+
+
+
+
+//..............................................................
+
+
+// =================================================================
+// PRODUCT MANAGEMENT ROUTES
+// =================================================================
+
+// GET: Fetch all products
+app.get('/api/admin/products', async (req, res) => {
+  try {
+    const {
+      sortBy = 'createdAt',
+      sortOrder = 'DESC',
+      page = 1,
+      limit = 50,
+      search
+    } = req.query;
+
+    let whereClause = {
+      productType: 'product' // Distinguish from other material entries
+    };
+
+    // Search functionality
+    if (search) {
+      whereClause[Op.or] = [
+        { name: { [Op.iLike]: `%${search}%` } },
+        { detail: { [Op.iLike]: `%${search}%` } },
+        { unit: { [Op.iLike]: `%${search}%` } }
+      ];
+    }
+
+    const offset = (page - 1) * limit;
+    const { count, rows: products } = await Material.findAndCountAll({
+      where: whereClause,
+      order: [[sortBy, sortOrder]],
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      attributes: [
+        'id', 
+        'name', 
+        ['detail', 'details'],           // [column_name, alias]
+        ['quantity', 'quantityInStore'], 
+        'unit', 
+        ['unitPrice', 'pricePerUnit'], 
+        'image1', 
+        'image2', 
+        'createdAt', 
+        'updatedAt'
+      ]
+    });
+
+    // Transform the data to match frontend expectations
+    const transformedProducts = products.map(product => ({
+      id: product.id,
+      name: product.name,
+      details: product.getDataValue('details') || product.detail,
+      quantityInStore: product.getDataValue('quantityInStore') || product.quantity,
+      unit: product.unit,
+      pricePerUnit: product.getDataValue('pricePerUnit') || product.unitPrice,
+      image1: product.image1,
+      image2: product.image2,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      message: 'Products fetched successfully',
+      data: transformedProducts,
+      pagination: {
+        total: count,
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        hasNext: offset + products.length < count,
+        hasPrev: page > 1
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching products:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// GET: Fetch single product by ID
+app.get('/api/admin/products/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const product = await Material.findOne({
+      where: { 
+        id,
+        productType: 'product'
+      },
+      attributes: [
+        'id',
+        'name',
+        'detail',
+        'quantity',
+        'unit',
+        'unitPrice',
+        'image1',
+        'image2',
+        'createdAt',
+        'updatedAt'
+      ]
+    });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    // Transform the data
+    const transformedProduct = {
+      id: product.id,
+      name: product.name,
+      details: product.detail,
+      quantityInStore: product.quantity,
+      unit: product.unit,
+      pricePerUnit: product.unitPrice,
+      image1: product.image1,
+      image2: product.image2,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Product fetched successfully',
+      data: transformedProduct
+    });
+  } catch (error) {
+    console.error('Error fetching product:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// POST: Create new product
+app.post('/api/admin/products', upload.fields([
+  { name: 'image1', maxCount: 1 },
+  { name: 'image2', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const { name, details, quantityInStore, unit, pricePerUnit, userId, role } = req.body;
+
+    // Validation
+    if (!name || !details || !unit || !quantityInStore || !pricePerUnit) {
+      return res.status(400).json({
+        success: false,
+        message: 'All required fields must be provided (name, details, unit, quantityInStore, pricePerUnit)'
+      });
+    }
+
+    // Validate numeric fields
+    const quantity = parseFloat(quantityInStore);
+    const price = parseFloat(pricePerUnit);
+
+    if (isNaN(quantity) || quantity < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Quantity in store must be a valid non-negative number'
+      });
+    }
+
+    if (isNaN(price) || price <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Price per unit must be a valid positive number'
+      });
+    }
+
+    // Handle image uploads
+    const image1 = req.files && req.files.image1 ? req.files.image1[0].filename : null;
+    const image2 = req.files && req.files.image2 ? req.files.image2[0].filename : null;
+
+    // Create product
+    const product = await Material.create({
+      name: name.trim(),
+      detail: details.trim(),
+      quantity: quantity,
+      unit: unit.trim(),
+      unitPrice: price,
+      image1: image1,
+      image2: image2,
+      productType: 'product',
+      userId: userId || 1, // Use provided userId or default to 1
+      role: role || 'admin', // Use provided role or default to 'admin'
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    // Transform response data
+    const transformedProduct = {
+      id: product.id,
+      name: product.name,
+      details: product.detail,
+      quantityInStore: product.quantity,
+      unit: product.unit,
+      pricePerUnit: product.unitPrice,
+      image1: product.image1,
+      image2: product.image2,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt
+    };
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: transformedProduct
+    });
+  } catch (error) {
+    console.error('Error creating product:', error);
+    
+    // Clean up uploaded files if product creation fails
+    if (req.files) {
+      Object.values(req.files).flat().forEach(file => {
+        fs.unlink(file.path, (err) => {
+          if (err) console.error('Error deleting file:', err);
+        });
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// PUT: Update existing product
+app.put('/api/admin/products/:id', upload.fields([
+  { name: 'image1', maxCount: 1 },
+  { name: 'image2', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, details, quantityInStore, unit, pricePerUnit } = req.body;
+
+    // Find existing product
+    const existingProduct = await Material.findOne({
+      where: { id, productType: 'product' }
+    });
+
+    if (!existingProduct) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    // Validation
+    if (!name || !details || !unit || !quantityInStore || !pricePerUnit) {
+      return res.status(400).json({
+        success: false,
+        message: 'All required fields must be provided (name, details, unit, quantityInStore, pricePerUnit)'
+      });
+    }
+
+    // Validate numeric fields
+    const quantity = parseFloat(quantityInStore);
+    const price = parseFloat(pricePerUnit);
+
+    if (isNaN(quantity) || quantity < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Quantity in store must be a valid non-negative number'
+      });
+    }
+
+    if (isNaN(price) || price <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Price per unit must be a valid positive number'
+      });
+    }
+
+    // Handle image uploads and cleanup
+    const oldImage1 = existingProduct.image1;
+    const oldImage2 = existingProduct.image2;
+
+    const image1 = req.files && req.files.image1 ? req.files.image1[0].filename : oldImage1;
+    const image2 = req.files && req.files.image2 ? req.files.image2[0].filename : oldImage2;
+
+    // Update product
+    await existingProduct.update({
+      name: name.trim(),
+      detail: details.trim(),
+      quantity: quantity,
+      unit: unit.trim(),
+      unitPrice: price,
+      image1: image1,
+      image2: image2,
+      userId: existingProduct.userId || 1, // Keep existing userId or default to 1
+      role: existingProduct.role || 'admin', // Keep existing role or default to admin
+      updatedAt: new Date()
+    });
+
+    // Clean up old images if new ones were uploaded
+    if (req.files && req.files.image1 && oldImage1) {
+      fs.unlink(path.join('uploads', oldImage1), (err) => {
+        if (err) console.error('Error deleting old image1:', err);
+      });
+    }
+
+    if (req.files && req.files.image2 && oldImage2) {
+      fs.unlink(path.join('uploads', oldImage2), (err) => {
+        if (err) console.error('Error deleting old image2:', err);
+      });
+    }
+
+    // Transform response data
+    const transformedProduct = {
+      id: existingProduct.id,
+      name: existingProduct.name,
+      details: existingProduct.detail,
+      quantityInStore: existingProduct.quantity,
+      unit: existingProduct.unit,
+      pricePerUnit: existingProduct.unitPrice,
+      image1: existingProduct.image1,
+      image2: existingProduct.image2,
+      createdAt: existingProduct.createdAt,
+      updatedAt: existingProduct.updatedAt
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Product updated successfully',
+      data: transformedProduct
+    });
+  } catch (error) {
+    console.error('Error updating product:', error);
+    
+    // Clean up uploaded files if update fails
+    if (req.files) {
+      Object.values(req.files).flat().forEach(file => {
+        fs.unlink(file.path, (err) => {
+          if (err) console.error('Error deleting file:', err);
+        });
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// DELETE: Delete product
+app.delete('/api/admin/products/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find product to delete
+    const product = await Material.findOne({
+      where: { id, productType: 'product' }
+    });
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    // Delete associated images
+    if (product.image1) {
+      fs.unlink(path.join('uploads', product.image1), (err) => {
+        if (err) console.error('Error deleting image1:', err);
+      });
+    }
+
+    if (product.image2) {
+      fs.unlink(path.join('uploads', product.image2), (err) => {
+        if (err) console.error('Error deleting image2:', err);
+      });
+    }
+
+    // Delete product
+    await product.destroy();
+
+    res.status(200).json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting product:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// GET: Get product statistics
+app.get('/api/admin/products/stats', async (req, res) => {
+  try {
+    const stats = await Material.findAll({
+      where: { productType: 'product' },
+      attributes: [
+        [sequelize.fn('COUNT', sequelize.col('id')), 'totalProducts'],
+        [sequelize.fn('SUM', sequelize.col('quantity')), 'totalQuantity'],
+        [sequelize.fn('SUM', sequelize.literal('quantity * "unitPrice"')), 'totalValue'],
+        [sequelize.fn('AVG', sequelize.col('unitPrice')), 'averagePrice']
+      ],
+      raw: true
+    });
+
+    const lowStockProducts = await Material.count({
+      where: {
+        productType: 'product',
+        quantity: { [Op.lt]: 10 } // Products with less than 10 units
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Product statistics fetched successfully',
+      data: {
+        totalProducts: parseInt(stats[0].totalProducts) || 0,
+        totalQuantity: parseFloat(stats[0].totalQuantity) || 0,
+        totalValue: parseFloat(stats[0].totalValue) || 0,
+        averagePrice: parseFloat(stats[0].averagePrice) || 0,
+        lowStockProducts: lowStockProducts || 0
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching product statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Serve uploaded images
+app.use('/uploads', express.static('uploads'));
+
+// Error handling middleware for multer
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        success: false,
+        message: 'File too large. Maximum size is 5MB.'
+      });
+    }
+  }
+  
+  if (error.message === 'Only image files (jpeg, jpg, png, gif, webp) are allowed!') {
+    return res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+  
+  next(error);
+});
+
+
+//.......................................................................
 
 
 

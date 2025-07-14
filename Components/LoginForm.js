@@ -63,19 +63,23 @@ const LoginForm = ({ navigation }) => {
     console.log('Normalized user type:', normalizedType);
     
     const navigationMap = {
+      'admin': 'AdminScreen',
+      'administrator': 'AdminScreen',
       'dealer': 'EmployeeDataScreen',
       'client': 'CustomerScreen',
       'customer': 'CustomerScreen',
+      'employee': 'EmployeeScreen',
       'field_employee': 'EmployeeScreen',
       'field-employee': 'EmployeeScreen',
       'fieldemployee': 'EmployeeScreen',
-      'employee': 'EmployeeScreen',
+      'officeemp': 'OfficeEmployeeScreen',
       'office_employee': 'OfficeEmployeeScreen',
       'office-employee': 'OfficeEmployeeScreen',
       'officeemployee': 'OfficeEmployeeScreen',
       'office': 'OfficeEmployeeScreen',
-      'admin': 'AdminScreen',
-      'administrator': 'AdminScreen'
+      'sale_parchase': 'SalesPurchaseScreen',
+      'sale_purchase': 'SalesPurchaseScreen',
+      'sales_purchase': 'SalesPurchaseScreen'
     };
     
     const screenName = navigationMap[normalizedType];
@@ -91,7 +95,7 @@ const LoginForm = ({ navigation }) => {
       );
     }
   };
-
+  
   const handleLogin = async () => {
     if (!phone || !password) {
       Alert.alert('Validation Error', 'Please enter both phone number and password.');
@@ -121,17 +125,45 @@ const LoginForm = ({ navigation }) => {
       if (response.data.error) {
         Alert.alert('Login Failed', response.data.error);
       } else {
-        const { type, id, fullname } = response.data;
+        // Extract user data from response
+        const { type, id, fullname, isApproved, status } = response.data;
         
         console.log('User type received from server:', type);
         console.log('User ID received:', id);
         console.log('Full name received:', fullname);
+        console.log('Is approved:', isApproved);
+        console.log('Status:', status);
+
+        // Define employee types that need approval
+        const employeeTypes = ['employee', 'officeemp', 'sale_parchase'];
+        const normalizedType = type.toLowerCase().trim();
+        
+        // Only check approval status for employee types
+        if (employeeTypes.includes(normalizedType) && (!isApproved || status === 'pending')) {
+          Alert.alert(
+            'Access Denied', 
+            'Your account is pending approval from the admin. Please wait for approval before logging in.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  setPhone('');
+                  setPassword('');
+                }
+              }
+            ]
+          );
+          return;
+        }
   
         try {
           // Store user data in AsyncStorage
           await AsyncStorage.setItem('user_id', String(id));
           await AsyncStorage.setItem('user_type', type);
           await AsyncStorage.setItem('user_phone', phoneToSend);
+          await AsyncStorage.setItem('user_approved', String(isApproved));
+          await AsyncStorage.setItem('user_status', status || 'approved');
+          
           if (fullname) {
             await AsyncStorage.setItem('user_name', fullname);
           }
@@ -152,9 +184,30 @@ const LoginForm = ({ navigation }) => {
       }
     } catch (error) {
       console.error('Login error:', error);
+      
       if (error.response) {
         console.error('Error response:', error.response.data);
-        Alert.alert('Login Failed', error.response.data?.error || 'Server error occurred');
+        const errorMessage = error.response.data?.error;
+        
+        if (errorMessage && errorMessage.includes('approval pending')) {
+          Alert.alert(
+            'Account Pending', 
+            'Your account is still pending approval from the admin. Please contact support if this persists.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  setPhone('');
+                  setPassword('');
+                }
+              }
+            ]
+          );
+        } else if (errorMessage && errorMessage.includes('Invalid credentials')) {
+          Alert.alert('Login Failed', 'Invalid phone number or password. Please try again.');
+        } else {
+          Alert.alert('Login Failed', errorMessage || 'Server error occurred');
+        }
       } else if (error.request) {
         console.error('Network error:', error.request);
         Alert.alert('Network Error', 'Unable to connect to server. Please check your internet connection.');
@@ -292,6 +345,13 @@ const LoginForm = ({ navigation }) => {
                   Don't have an account? <Text style={styles.signupButtonTextBold}>Sign Up</Text>
                 </Text>
               </TouchableOpacity>
+
+              {/* Info notice */}
+              <View style={styles.infoContainer}>
+                <Text style={styles.infoText}>
+                  💡 Note: Employee accounts require admin approval before login access.
+                </Text>
+              </View>
             </View>
           </Animated.View>
 
@@ -468,6 +528,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#E2E8F0',
     alignItems: 'center',
+    marginBottom: 16,
   },
   signupButtonText: {
     color: '#64748B',
@@ -477,6 +538,20 @@ const styles = StyleSheet.create({
   signupButtonTextBold: {
     color: '#6366F1',
     fontWeight: '700',
+  },
+  infoContainer: {
+    backgroundColor: '#EEF2FF',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    alignItems: 'center',
+  },
+  infoText: {
+    color: '#4F46E5',
+    fontSize: 12,
+    textAlign: 'center',
+    fontWeight: '500',
   },
   footer: {
     alignItems: 'center',

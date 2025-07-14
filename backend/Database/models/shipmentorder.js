@@ -148,6 +148,12 @@ bill_text:{
 role: {
   type: DataTypes.STRING, // 'employee', 'office'
   allowNull: false
+},
+
+productType: {
+  type: DataTypes.STRING,
+  allowNull: true,
+  defaultValue: 'product'
 }
 
 }, {
