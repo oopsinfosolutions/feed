@@ -1,722 +1,684 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  SafeAreaView,
-  StyleSheet,
   View,
-  KeyboardAvoidingView,
-  Platform,
+  Text,
+  StyleSheet,
   ScrollView,
-  Animated,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
+  Image,
+  RefreshControl,
+  Modal,
+  TextInput,
+  Linking,
+  SafeAreaView
 } from 'react-native';
-import { TextInput, Button, Title, Card, Text } from 'react-native-paper';
-import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 
-const CustomerScreen = ({ route }) => {
-  const [tab, setTab] = useState('Material');
-  const [fadeAnim] = useState(new Animated.Value(0));
+// Update this to match your server URL
+const API_BASE_URL = 'http://192.168.1.42:3000';
 
-  // Get customer ID from route params (passed during login)
-  const customerId = route?.params?.customerId || '';
+const CustomerScreen = ({ navigation }) => {
+  const [user, setUser] = useState(null);
+  const [bills, setBills] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedBill, setSelectedBill] = useState(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentData, setPaymentData] = useState({
+    paymentMethod: '',
+    transactionId: '',
+    paymentNotes: ''
+  });
 
-  // Material Information - Updated to match backend fields
-  const [materialName, setMaterialName] = useState('');
-  const [materialDetails, setMaterialDetails] = useState('');
-  const [quantity, setQuantity] = useState('');
+  const [stats, setStats] = useState({
+    totalBills: 0,
+    pendingBills: 0,
+    successfulBills: 0,
+    totalAmount: 0,
+    pendingAmount: 0
+  });
 
-  // Location Details - Only drop location now
-  const [dropLocation, setDropLocation] = useState('');
+  const paymentMethods = [
+    'Cash',
+    'UPI',
+    'Bank Transfer',
+    'Credit Card',
+    'Debit Card',
+    'Cheque',
+    'Online Banking'
+  ];
 
-  // Material List Management
-  const [materials, setMaterials] = useState([]);
-  const [editIndex, setEditIndex] = useState(null);
-  const [editingId, setEditingId] = useState(null);
+  useFocusEffect(
+    useCallback(() => {
+      loadUserData();
+    }, [])
+  );
 
-  // Status field
-  const [status, setStatus] = useState('Pending');
-  const [user_id, setUser_id] = useState('');
-  const [loading, setLoading] = useState(false);
+  const navigateToLogin = () => {
+    navigation.replace('Login');
+  };
 
-  // Base URL for your API
-  const API_BASE_URL = 'http://192.168.1.15:3000';
+  const loadUserData = async () => {
+    try {
+      console.log('=== Loading user data ===');
+      
+      // Get data using the keys that LoginForm actually saves
+      const userId = await AsyncStorage.getItem('user_id');
+      const userType = await AsyncStorage.getItem('user_type');
+      const userPhone = await AsyncStorage.getItem('user_phone');
+      const userName = await AsyncStorage.getItem('user_name');
+      
+      console.log('Raw user data from storage:');
+      console.log('- user_id:', userId);
+      console.log('- user_type:', userType);
+      console.log('- user_phone:', userPhone);
+      console.log('- user_name:', userName);
+      
+      if (!userId || !userType) {
+        console.log('Essential user data missing');
+        Alert.alert('Authentication Issue', 'Please login again. User data not found.');
+        navigateToLogin();
+        return;
+      }
+      
+      // Create user object from individual storage items
+      const parsedUser = {
+        id: parseInt(userId),
+        type: userType,
+        fullname: userName || 'User',
+        phone: userPhone
+      };
+      
+      console.log('Constructed user object:', parsedUser);
+      
+      // Check if this is actually a customer - be flexible with user type
+      if (userType && userType !== 'Client' && userType !== 'client' && userType !== 'Customer') {
+        console.log('User is not a client, type is:', userType);
+        Alert.alert('Access Denied', `This screen is for customers only. Your account type: ${userType}`);
+        navigateToLogin();
+        return;
+      }
+      
+      setUser(parsedUser);
+      console.log('User data set successfully, now fetching bills...');
+      
+      // Fetch bills for this user
+      await fetchBills(parsedUser.id);
+      
+    } catch (error) {
+      console.error('Error loading user data:', error);
+      Alert.alert('Error', `Failed to load user data: ${error.message}. Please login again.`);
+      navigateToLogin();
+    }
+  };
 
-  // Get user ID from AsyncStorage on component mount
-  useEffect(() => {
-    const getUserId = async () => {
-      try {
-        console.log('Attempting to get user_id from AsyncStorage...');
-        
-        // Try multiple possible keys that might be used for user ID
-        const possibleKeys = ['user_id', 'userId', 'id', 'customer_id', 'customerId'];
-        let foundUserId = null;
-        
-        for (const key of possibleKeys) {
-          const value = await AsyncStorage.getItem(key);
-          console.log(`AsyncStorage key '${key}':`, value);
-          if (value && value !== 'null' && value !== 'undefined') {
-            foundUserId = value;
-            console.log(`Found user ID with key '${key}':`, foundUserId);
-            break;
-          }
+  const fetchBills = async (clientId) => {
+    try {
+      console.log('=== Fetching bills ===');
+      setLoading(true);
+      
+      // Create a dummy token since your backend doesn't seem to require real JWT authentication
+      const dummyToken = 'dummy-token-for-api-calls';
+      
+      console.log(`Fetching bills for client ID: ${clientId}`);
+      console.log(`Using dummy token for API calls`);
+      
+      const response = await fetch(`${API_BASE_URL}/api/client/bills/${clientId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${dummyToken}`,
+          'Content-Type': 'application/json'
         }
+      });
 
-        // Also check route params
-        if (!foundUserId && customerId) {
-          console.log('Using customerId from route params:', customerId);
-          foundUserId = customerId;
-        }
-
-        // Also check all items in AsyncStorage for debugging
-        console.log('All AsyncStorage keys:');
-        const allKeys = await AsyncStorage.getAllKeys();
-        console.log('Available keys:', allKeys);
+      console.log('Bills API response status:', response.status);
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Bills API response data:', JSON.stringify(data, null, 2));
         
-        if (foundUserId) {
-          setUser_id(foundUserId);
-          console.log('Set user_id to:', foundUserId);
+        if (data.success) {
+          const bills = data.data.bills || [];
+          console.log(`Successfully fetched ${bills.length} bills`);
+          setBills(bills);
+          calculateStats(bills);
         } else {
-          console.log('No user ID found in any location');
-          Alert.alert(
-            'Error', 
-            'User ID not found. Please login again.\n\nDebug info:\n' + 
-            `Route customerId: ${customerId}\n` +
-            `Available keys: ${allKeys.join(', ')}`
-          );
+          console.error('API returned error:', data.message);
+          Alert.alert('Error', data.message || 'Failed to fetch bills');
         }
-      } catch (error) {
-        console.error('Error getting user ID:', error);
-        Alert.alert('Error', 'Failed to get user information. Please login again.\nError: ' + error.message);
-      }
-    };
-    getUserId();
-  }, [customerId]);
-
-  // Debug useEffect to monitor user_id changes
-  useEffect(() => {
-    console.log('user_id state changed to:', user_id);
-  }, [user_id]);
-
-  // Animate tab changes
-  useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [tab]);
-
-  // Load shipments when user_id is available
-  useEffect(() => {
-    if (user_id) {
-      console.log('Loading shipments for user_id:', user_id);
-      loadShipments(user_id);
-    }
-  }, [user_id]);
-
-  const loadShipments = async (userId = user_id) => {
-    if (!userId) {
-      console.log('No user ID available for loading shipments');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      console.log('Loading shipments for user:', userId);
-      
-      // Try multiple API endpoints to fetch shipments
-      let response;
-      let shipments = [];
-      
-      // First try the user-specific endpoint
-      try {
-        console.log('Trying user-specific endpoint:', `${API_BASE_URL}/shipment/user?user_id=${userId}`);
-        response = await axios.get(`${API_BASE_URL}/shipment/user`, {
-          params: { user_id: userId },
-        });
-        shipments = response.data || [];
-        console.log('User-specific shipments response:', shipments);
-      } catch (userError) {
-        console.log('User-specific endpoint failed:', userError.message);
+      } else if (response.status === 401) {
+        console.log('Unauthorized response - API might require authentication');
+        const errorText = await response.text();
+        console.log('401 Error details:', errorText);
         
-        // Try alternative endpoint with customer ID
-        try {
-          console.log('Trying customer-specific endpoint:', `${API_BASE_URL}/shipments/customer/${userId}`);
-          response = await axios.get(`${API_BASE_URL}/shipments/customer/${userId}`);
-          shipments = response.data || [];
-          console.log('Customer-specific shipments response:', shipments);
-        } catch (customerError) {
-          console.log('Customer-specific endpoint failed:', customerError.message);
-          
-          // Try getting all shipments and filter by user
-          try {
-            console.log('Trying all shipments endpoint:', `${API_BASE_URL}/shipments`);
-            response = await axios.get(`${API_BASE_URL}/shipments`);
-            const allShipments = response.data || [];
-            console.log('All shipments response:', allShipments);
-            
-            // Filter shipments by user ID (check multiple possible field names)
-            shipments = allShipments.filter(shipment => 
-              shipment.c_id == userId || 
-              shipment.user_id == userId || 
-              shipment.customer_id == userId ||
-              shipment.customerId == userId
-            );
-            console.log('Filtered shipments for user:', shipments);
-          } catch (allError) {
-            console.log('All shipments endpoint failed:', allError.message);
-            
-            // Last resort: try a generic GET with different parameter names
-            try {
-              console.log('Trying with c_id parameter:', `${API_BASE_URL}/shipment/user?c_id=${userId}`);
-              response = await axios.get(`${API_BASE_URL}/shipment/user`, {
-                params: { c_id: userId },
-              });
-              shipments = response.data || [];
-              console.log('c_id parameter shipments response:', shipments);
-            } catch (finalError) {
-              throw finalError;
-            }
+        // Don't redirect on 401, just show error since your backend might not have auth middleware
+        Alert.alert('API Error', 'Bills API requires authentication. Please contact support.');
+      } else {
+        const errorData = await response.text();
+        console.error('HTTP error:', response.status, errorData);
+        
+        // Don't redirect on API errors, just show the error
+        Alert.alert('Error', `Failed to fetch bills (${response.status}). Please try again later.`);
+      }
+    } catch (error) {
+      console.error('Network error fetching bills:', error);
+      
+      // Don't redirect on network errors, just show the error
+      Alert.alert('Network Error', 'Could not connect to server. Please check your internet connection.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const calculateStats = (billsData) => {
+    const totalBills = billsData.length;
+    const pendingBills = billsData.filter(bill => bill.paymentStatus === 'pending').length;
+    const successfulBills = billsData.filter(bill => bill.paymentStatus === 'successful').length;
+    const totalAmount = billsData.reduce((sum, bill) => sum + parseFloat(bill.totalAmount || 0), 0);
+    const pendingAmount = billsData
+      .filter(bill => bill.paymentStatus === 'pending')
+      .reduce((sum, bill) => sum + parseFloat(bill.totalAmount || 0), 0);
+
+    setStats({
+      totalBills,
+      pendingBills,
+      successfulBills,
+      totalAmount,
+      pendingAmount
+    });
+
+    console.log('Calculated stats:', {
+      totalBills,
+      pendingBills,
+      successfulBills,
+      totalAmount,
+      pendingAmount
+    });
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    if (user) {
+      fetchBills(user.id);
+    }
+  };
+
+  const handleBillPress = async (bill) => {
+    try {
+      const dummyToken = 'dummy-token-for-api-calls';
+      console.log(`Fetching details for bill ID: ${bill.id}`);
+      
+      const response = await fetch(
+        `${API_BASE_URL}/api/client/bill/${bill.id}?clientId=${user.id}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${dummyToken}`,
+            'Content-Type': 'application/json'
           }
         }
-      }
-      
-      console.log('Final shipments data:', shipments);
-      setMaterials(shipments);
-      
-      if (shipments.length === 0) {
-        console.log('No shipments found for user ID:', userId);
-      }
-      
-    } catch (error) {
-      console.error('Error loading shipments:', error);
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-        console.error('Error status:', error.response.status);
-        Alert.alert('Error', `Failed to load shipments: ${error.response.data.message || error.response.data.error || 'Unknown error'}\n\nStatus: ${error.response.status}`);
-      } else if (error.request) {
-        console.error('No response received:', error.request);
-        Alert.alert('Error', 'No response from server. Please check your internet connection and server status.');
+      );
+
+      console.log('Bill detail response status:', response.status);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Bill detail response:', data);
+        
+        if (data.success) {
+          setSelectedBill(data.data);
+        } else {
+          Alert.alert('Error', data.message || 'Failed to fetch bill details');
+        }
       } else {
-        console.error('Request setup error:', error.message);
-        Alert.alert('Error', 'Failed to load shipments. Please check your internet connection.');
+        const errorData = await response.text();
+        console.error('Bill detail error:', response.status, errorData);
+        Alert.alert('Error', 'Failed to fetch bill details');
       }
-    } finally {
-      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching bill details:', error);
+      Alert.alert('Error', 'Network error. Please try again.');
     }
   };
 
-  const handleAddOrUpdateMaterial = async () => {
-    console.log('=== DEBUG INFO ===');
-    console.log('user_id state:', user_id);
-    console.log('customerId from route:', customerId);
-    console.log('materialName:', materialName);
-    console.log('materialDetails:', materialDetails);
-    console.log('quantity:', quantity);
-    console.log('=================');
-
-    // Updated validation - removed price per unit validation
-    if (!materialName || !materialDetails || !quantity) {
-      Alert.alert('Validation Error', 'Please fill all required fields: Material Name, Details, and Quantity.');
-      return;
-    }
-
-    // Check for user_id with more detailed error message
-    if (!user_id || user_id === '' || user_id === 'null' || user_id === 'undefined') {
-      console.error('User ID validation failed. Current user_id:', user_id);
-      
-      // Try to get fresh user_id from AsyncStorage
-      try {
-        const freshUserId = await AsyncStorage.getItem('user_id');
-        console.log('Fresh user_id from AsyncStorage:', freshUserId);
-        
-        if (freshUserId && freshUserId !== 'null' && freshUserId !== 'undefined') {
-          setUser_id(freshUserId);
-          Alert.alert('Info', 'User ID recovered. Please try again.');
-          return;
-        }
-      } catch (error) {
-        console.error('Error getting fresh user_id:', error);
-      }
-
-      Alert.alert(
-        'Authentication Error', 
-        `User ID is required but not found.\n\n` +
-        `Debug info:\n` +
-        `- user_id state: "${user_id}"\n` +
-        `- customerId from route: "${customerId}"\n` +
-        `- Please login again to continue.`
-      );
+  const handlePayment = async () => {
+    if (!paymentData.paymentMethod) {
+      Alert.alert('Error', 'Please select a payment method');
       return;
     }
 
     try {
-      setLoading(true);
-      const formData = new FormData();
-
-      // Add form fields matching backend expectations - removed price_per_unit
-      formData.append('material_Name', materialName);
-      formData.append('detail', materialDetails);
-      formData.append('quantity', quantity);
-      formData.append('drop_location', dropLocation || '');
-      formData.append('c_id', user_id); // Use user_id instead of customerId
-      formData.append('status', status);
-
-      console.log('Sending c_id:', user_id);
-
-      let response;
-      if (editingId) {
-        // Update existing shipment
-        response = await axios.put(`${API_BASE_URL}/update-shipment/${editingId}`, formData, {
+      const dummyToken = 'dummy-token-for-api-calls';
+      console.log('Submitting payment for bill:', selectedBill.id);
+      
+      const response = await fetch(
+        `${API_BASE_URL}/api/client/bill/${selectedBill.id}/payment`,
+        {
+          method: 'PATCH',
           headers: {
-            'Content-Type': 'multipart/form-data',
+            'Authorization': `Bearer ${dummyToken}`,
+            'Content-Type': 'application/json'
           },
-        });
-        Alert.alert('Success', 'Shipment updated successfully!');
+          body: JSON.stringify({
+            clientId: user.id,
+            ...paymentData
+          })
+        }
+      );
+
+      console.log('Payment response status:', response.status);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Payment response:', data);
+        
+        Alert.alert('Success', 'Payment marked as completed successfully!');
+        setShowPaymentModal(false);
+        setPaymentData({ paymentMethod: '', transactionId: '', paymentNotes: '' });
+        setSelectedBill(null);
+        await fetchBills(user.id);
       } else {
-        // Add new shipment
-        response = await axios.post(`${API_BASE_URL}/add_shipment`, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
-        Alert.alert('Success', 'Shipment added successfully!');
+        const errorData = await response.json();
+        console.error('Payment error:', errorData);
+        Alert.alert('Error', errorData.message || 'Failed to update payment');
       }
-
-      // Reload shipments and reset form
-      await loadShipments(user_id);
-      resetForm();
-      setTab('Materials');
     } catch (error) {
-      console.error('Error submitting shipment:', error);
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-        Alert.alert('Error', error.response?.data?.error || error.response?.data?.message || 'Failed to submit shipment. Please try again.');
-      } else {
-        Alert.alert('Error', 'Failed to submit shipment. Please check your internet connection.');
-      }
-    } finally {
-      setLoading(false);
+      console.error('Error updating payment:', error);
+      Alert.alert('Error', 'Network error. Please try again.');
     }
   };
 
-  const resetForm = () => {
-    setMaterialName('');
-    setMaterialDetails('');
-    setQuantity('');
-    setDropLocation('');
-    setStatus('Pending');
-    setEditIndex(null);
-    setEditingId(null);
-  };
-
-  const handleRemoveMaterial = (shipment) => {
+  const handleLogout = async () => {
     Alert.alert(
-      'Confirm Delete',
-      'Are you sure you want to remove this shipment?',
+      'Logout',
+      'Are you sure you want to logout?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Logout',
           style: 'destructive',
           onPress: async () => {
             try {
-              setLoading(true);
-              await axios.delete(`${API_BASE_URL}/delete-shipment/${shipment.id}`);
-              Alert.alert('Success', 'Shipment deleted successfully');
-              await loadShipments(user_id);
+              // Clear the data using the same keys LoginForm uses
+              await AsyncStorage.multiRemove(['user_id', 'user_type', 'user_phone', 'user_name']);
+              navigateToLogin();
             } catch (error) {
-              console.error('Error deleting shipment:', error);
-              Alert.alert('Error', 'Failed to delete shipment');
-            } finally {
-              setLoading(false);
+              console.error('Error during logout:', error);
+              navigateToLogin();
             }
-          },
-        },
+          }
+        }
       ]
     );
   };
 
-  const handleEditMaterial = (shipment, index) => {
-    setMaterialName(shipment.material_Name || '');
-    setMaterialDetails(shipment.detail || '');
-    setQuantity(shipment.quantity?.toString() || '');
-    setDropLocation(shipment.drop_location || '');
-    setStatus(shipment.status || 'Pending');
-    
-    setEditIndex(index);
-    setEditingId(shipment.id);
-    setTab('Material');
-  };
-
-  // Add a debug function to test different API endpoints
-  const testAPIEndpoints = async () => {
-    if (!user_id) {
-      Alert.alert('Error', 'No user ID available for testing');
-      return;
-    }
-
-    const endpoints = [
-      `${API_BASE_URL}/shipment/user?user_id=${user_id}`,
-      `${API_BASE_URL}/shipments/customer/${user_id}`,
-      `${API_BASE_URL}/shipments`,
-      `${API_BASE_URL}/shipment/user?c_id=${user_id}`,
-      `${API_BASE_URL}/api/shipments/user/${user_id}`,
-      `${API_BASE_URL}/getAllShipments`,
-    ];
-
-    let results = [];
-    
-    for (let endpoint of endpoints) {
-      try {
-        console.log(`Testing endpoint: ${endpoint}`);
-        const response = await axios.get(endpoint);
-        results.push(`✅ ${endpoint}: ${response.status} - ${Array.isArray(response.data) ? response.data.length : 'Non-array'} items`);
-      } catch (error) {
-        results.push(`❌ ${endpoint}: ${error.response?.status || 'No response'} - ${error.message}`);
-      }
-    }
-
-    Alert.alert('API Test Results', results.join('\n\n'));
-  };
-
-  // Add a debug button to check AsyncStorage (remove in production)
-  const debugAsyncStorage = async () => {
-    try {
-      const allKeys = await AsyncStorage.getAllKeys();
-      const allItems = await AsyncStorage.multiGet(allKeys);
-      console.log('=== AsyncStorage Debug ===');
-      allItems.forEach(([key, value]) => {
-        console.log(`${key}: ${value}`);
-      });
-      console.log('========================');
-      
-      Alert.alert(
-        'AsyncStorage Debug',
-        allItems.map(([key, value]) => `${key}: ${value}`).join('\n')
-      );
-    } catch (error) {
-      console.error('Debug error:', error);
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'pending':
+        return '#ffc107';
+      case 'successful':
+        return '#28a745';
+      default:
+        return '#6c757d';
     }
   };
 
-  const renderMaterialForm = () => (
-    <Animated.View style={{ opacity: fadeAnim, flex: 1 }}>
-      <ScrollView 
-        contentContainerStyle={{ paddingBottom: 30 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Debug Info Card - Remove in production */}
-        <Card style={[styles.modernCard, { backgroundColor: '#FEF3E2' }]}>
-          <Card.Content>
-            <Text style={{ fontSize: 12, color: '#92400E' }}>
-              Debug: user_id = "{user_id}" | customerId = "{customerId}"
-            </Text>
-            <View style={{ flexDirection: 'row', marginTop: 5, gap: 10 }}>
-              <TouchableOpacity onPress={debugAsyncStorage}>
-                <Text style={{ fontSize: 12, color: '#3B82F6', textDecorationLine: 'underline' }}>
-                  Debug AsyncStorage
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={testAPIEndpoints}>
-                <Text style={{ fontSize: 12, color: '#DC2626', textDecorationLine: 'underline' }}>
-                  Test API Endpoints
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </Card.Content>
-        </Card>
+  const getStatusText = (status) => {
+    switch (status) {
+      case 'pending':
+        return 'Pending';
+      case 'successful':
+        return 'Paid';
+      default:
+        return 'Unknown';
+    }
+  };
 
-        {/* Material Information Section */}
-        <Card style={styles.modernCard}>
-          <View style={styles.cardHeader}>
-            <Title style={styles.cardTitle}>
-              {editingId ? '✏️ Edit Shipment' : '📦 Material Information'}
-            </Title>
-          </View>
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+  };
 
-          <Card.Content style={styles.cardContent}>
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Material Name *"
-                mode="outlined"
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                left={<TextInput.Icon icon="cube-outline" color="#FB923C" />}
-                value={materialName}
-                onChangeText={setMaterialName}
-                theme={{ colors: { primary: '#FB923C' } }}
-                disabled={loading}
-              />
-            </View>
+  const makePhoneCall = (phoneNumber) => {
+    Linking.openURL(`tel:${phoneNumber}`);
+  };
 
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Material Details *"
-                mode="outlined"
-                multiline
-                numberOfLines={3}
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                left={<TextInput.Icon icon="information-outline" color="#FB923C" />}
-                value={materialDetails}
-                onChangeText={setMaterialDetails}
-                theme={{ colors: { primary: '#FB923C' } }}
-                disabled={loading}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Quantity *"
-                mode="outlined"
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                keyboardType="numeric"
-                left={<TextInput.Icon icon="counter" color="#FB923C" />}
-                value={quantity}
-                onChangeText={setQuantity}
-                theme={{ colors: { primary: '#FB923C' } }}
-                disabled={loading}
-              />
-            </View>
-          </Card.Content>
-        </Card>
-
-        {/* Location Details Section */}
-        <Card style={styles.modernCard}>
-          <View style={styles.cardHeader}>
-            <Title style={styles.cardTitle}>📍 Location Details</Title>
-          </View>
-
-          <Card.Content style={styles.cardContent}>
-            <View style={styles.inputGroup}>
-              <TextInput
-                label="Drop Location"
-                mode="outlined"
-                style={styles.modernInput}
-                outlineColor="#FDBA74"
-                activeOutlineColor="#FB923C"
-                left={<TextInput.Icon icon="map-marker-down" color="#FB923C" />}
-                value={dropLocation}
-                onChangeText={setDropLocation}
-                theme={{ colors: { primary: '#FB923C' } }}
-                disabled={loading}
-              />
-            </View>
-          </Card.Content>
-        </Card>
-
-        {/* Submit Button */}
-        <TouchableOpacity 
-          style={[styles.modernButton, loading && styles.disabledButton]} 
-          onPress={handleAddOrUpdateMaterial}
-          activeOpacity={0.8}
-          disabled={loading}
-        >
-          <View style={styles.buttonContainer}>
-            <Text style={styles.buttonText}>
-              {loading ? '⏳ Processing...' : (editingId ? '✅ Update Shipment' : '➕ Add Shipment')}
-            </Text>
-          </View>
-        </TouchableOpacity>
-
-        {editingId && (
-          <TouchableOpacity
-            style={[styles.cancelButton, loading && styles.disabledButton]}
-            onPress={() => {
-              if (!loading) {
-                resetForm();
-                setTab('Materials');
-              }
-            }}
-            activeOpacity={0.7}
-            disabled={loading}
-          >
-            <Text style={styles.cancelButtonText}>Cancel Edit</Text>
-          </TouchableOpacity>
-        )}
-      </ScrollView>
-    </Animated.View>
-  );
-
-  const renderMaterialsList = () => (
-    <Animated.View style={{ opacity: fadeAnim, flex: 1 }}>
-      <Card style={styles.modernCard}>
-        <View style={styles.cardHeader}>
-          <Title style={styles.cardTitle}>📋 My Shipments</Title>
-          <TouchableOpacity
-            style={[styles.refreshButton, loading && styles.disabledButton]}
-            onPress={() => !loading && loadShipments(user_id)}
-            activeOpacity={0.7}
-            disabled={loading}
-          >
-            <Text style={styles.refreshButtonText}>
-              {loading ? '⏳' : '🔄'} Refresh
-            </Text>
-          </TouchableOpacity>
-        </View>
-        
-        <Card.Content style={styles.cardContent}>
-          {!user_id ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateIcon}>⚠️</Text>
-              <Text style={styles.emptyStateTitle}>No User ID</Text>
-              <Text style={styles.emptyStateSubtitle}>
-                Please login to view your shipments
-              </Text>
-            </View>
-          ) : loading ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateIcon}>⏳</Text>
-              <Text style={styles.emptyStateTitle}>Loading...</Text>
-              <Text style={styles.emptyStateSubtitle}>
-                Fetching your shipments
-              </Text>
-            </View>
-          ) : materials.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateIcon}>📦</Text>
-              <Text style={styles.emptyStateTitle}>No shipments found</Text>
-              <Text style={styles.emptyStateSubtitle}>
-                Add your first shipment to get started{'\n'}
-                {user_id ? `User ID: ${user_id}` : 'No user ID available'}
-              </Text>
-            </View>
-          ) : (
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {materials.map((material, index) => (
-                <Card key={material.id || index} style={styles.materialCard}>
-                  <Card.Content style={styles.materialCardContent}>
-                    <View style={styles.materialHeader}>
-                      <Text style={styles.materialName}>{material.material_Name}</Text>
-                      <View style={styles.materialActions}>
-                        <TouchableOpacity
-                          style={[styles.editButton, loading && styles.disabledButton]}
-                          onPress={() => !loading && handleEditMaterial(material, index)}
-                          disabled={loading}
-                        >
-                          <Text style={styles.editButtonText}>✏️ Edit</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.deleteButton, loading && styles.disabledButton]}
-                          onPress={() => !loading && handleRemoveMaterial(material)}
-                          disabled={loading}
-                        >
-                          <Text style={styles.deleteButtonText}>🗑️ Delete</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                    
-                    <View style={styles.materialDetails}>
-                      <Text style={styles.materialDetailText}>
-                        Quantity: {material.quantity}
-                      </Text>
-                      <Text style={styles.materialDetailText}>
-                        Status: {material.status || 'Pending'}
-                      </Text>
-                      <Text style={styles.materialDetailText}>
-                        Details: {material.detail}
-                      </Text>
-                    </View>
-
-                    {material.drop_location && (
-                      <View style={styles.materialLocations}>
-                        <Text style={styles.locationText}>
-                          📍 Drop Location: {material.drop_location}
-                        </Text>
-                      </View>
-                    )}
-                  </Card.Content>
-                </Card>
-              ))}
-            </ScrollView>
-          )}
-        </Card.Content>
-      </Card>
-    </Animated.View>
-  );
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007bff" />
+        <Text style={styles.loadingText}>Loading bills...</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.backgroundContainer}>
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[
-              styles.modernTab,
-              tab === 'Material' && styles.activeModernTab
-            ]}
-            onPress={() => {
-              if (!loading) {
-                setTab('Material');
-                fadeAnim.setValue(0);
-                Animated.timing(fadeAnim, {
-                  toValue: 1,
-                  duration: 300,
-                  useNativeDriver: true,
-                }).start();
-              }
-            }}
-            activeOpacity={0.8}
-            disabled={loading}
-          >
-            <View style={[
-              styles.tabContent,
-              tab === 'Material' && styles.activeTabContent
-            ]}>
-              <Text style={[
-                styles.tabText,
-                tab === 'Material' && styles.activeTabText
-              ]}>
-                📦 Shipment
-              </Text>
-            </View>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerContent}>
+          <View style={styles.userInfo}>
+            <Text style={styles.welcomeText}>Welcome back,</Text>
+            <Text style={styles.userName}>{user?.fullname || 'User'}</Text>
+          </View>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <Icon name="logout" size={24} color="#fff" />
           </TouchableOpacity>
+        </View>
+      </View>
 
-          <TouchableOpacity
-            style={[
-              styles.modernTab,
-              tab === 'Materials' && styles.activeModernTab
-            ]}
-            onPress={() => {
-              if (!loading) {
-                setTab('Materials');
-                fadeAnim.setValue(0);
-                Animated.timing(fadeAnim, {
-                  toValue: 1,
-                  duration: 300,
-                  useNativeDriver: true,
-                }).start();
-              }
-            }}
-            activeOpacity={0.8}
-            disabled={loading}
+      <ScrollView
+        style={styles.scrollView}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
+        {/* Stats Cards */}
+        <View style={styles.statsContainer}>
+          <View style={styles.statCard}>
+            <Icon name="receipt" size={24} color="#007bff" />
+            <Text style={styles.statValue}>{stats.totalBills}</Text>
+            <Text style={styles.statLabel}>Total Bills</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Icon name="pending" size={24} color="#ffc107" />
+            <Text style={styles.statValue}>{stats.pendingBills}</Text>
+            <Text style={styles.statLabel}>Pending</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Icon name="check-circle" size={24} color="#28a745" />
+            <Text style={styles.statValue}>{stats.successfulBills}</Text>
+            <Text style={styles.statLabel}>Paid</Text>
+          </View>
+        </View>
+
+        <View style={styles.amountContainer}>
+          <View style={styles.amountCard}>
+            <Text style={styles.amountLabel}>Total Amount</Text>
+            <Text style={styles.amountValue}>₹{stats.totalAmount.toFixed(2)}</Text>
+          </View>
+          <View style={styles.amountCard}>
+            <Text style={styles.amountLabel}>Pending Amount</Text>
+            <Text style={[styles.amountValue, styles.pendingAmount]}>₹{stats.pendingAmount.toFixed(2)}</Text>
+          </View>
+        </View>
+
+        {/* Contact Support */}
+        <View style={styles.supportContainer}>
+          <Text style={styles.supportTitle}>Need Help?</Text>
+          <TouchableOpacity 
+            style={styles.supportButton}
+            onPress={() => makePhoneCall('+919876543210')}
           >
-            <View style={[
-              styles.tabContent,
-              tab === 'Materials' && styles.activeTabContent
-            ]}>
-              <Text style={[
-                styles.tabText,
-                tab === 'Materials' && styles.activeTabText
-              ]}>
-                📋 My Shipments
-              </Text>
-            </View>
+            <Icon name="phone" size={20} color="#007bff" />
+            <Text style={styles.supportText}>Contact Support</Text>
           </TouchableOpacity>
         </View>
 
-        <KeyboardAvoidingView 
-          style={{ flex: 1 }} 
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          {tab === 'Material' ? renderMaterialForm() : renderMaterialsList()}
-        </KeyboardAvoidingView>
-      </View>
+        {/* Bills List */}
+        <View style={styles.billsSection}>
+          <Text style={styles.sectionTitle}>Your Bills</Text>
+          
+          {bills.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Icon name="receipt-long" size={48} color="#ccc" />
+              <Text style={styles.emptyStateText}>No bills found</Text>
+              <Text style={styles.emptyStateSubtext}>Your bills will appear here once created</Text>
+            </View>
+          ) : (
+            bills.map((bill) => (
+              <TouchableOpacity
+                key={bill.id}
+                style={styles.billCard}
+                onPress={() => handleBillPress(bill)}
+              >
+                <View style={styles.billHeader}>
+                  <View style={styles.billInfo}>
+                    <Text style={styles.billNumber}>{bill.billNumber}</Text>
+                    <Text style={styles.materialName}>{bill.materialName}</Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(bill.paymentStatus) }]}>
+                    <Text style={styles.statusText}>{getStatusText(bill.paymentStatus)}</Text>
+                  </View>
+                </View>
+                
+                <View style={styles.billDetails}>
+                  <View style={styles.billDetailRow}>
+                    <Text style={styles.billDetailLabel}>Quantity:</Text>
+                    <Text style={styles.billDetailValue}>{bill.quantity} {bill.unit}</Text>
+                  </View>
+                  <View style={styles.billDetailRow}>
+                    <Text style={styles.billDetailLabel}>Amount:</Text>
+                    <Text style={styles.billDetailValue}>₹{parseFloat(bill.totalAmount || 0).toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.billDetailRow}>
+                    <Text style={styles.billDetailLabel}>Date:</Text>
+                    <Text style={styles.billDetailValue}>{formatDate(bill.sentAt)}</Text>
+                  </View>
+                  {bill.dueDate && (
+                    <View style={styles.billDetailRow}>
+                      <Text style={styles.billDetailLabel}>Due Date:</Text>
+                      <Text style={styles.billDetailValue}>{formatDate(bill.dueDate)}</Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.billFooter}>
+                  <Icon name="chevron-right" size={20} color="#007bff" />
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Bill Detail Modal */}
+      <Modal
+        visible={!!selectedBill}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Bill Details</Text>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setSelectedBill(null)}
+            >
+              <Icon name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            {selectedBill && (
+              <>
+                <View style={styles.billDetailSection}>
+                  <Text style={styles.detailSectionTitle}>Bill Information</Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Bill Number:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.billNumber}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Material:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.materialName}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Description:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.description || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Status:</Text>
+                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedBill.paymentStatus) }]}>
+                      <Text style={styles.statusText}>{getStatusText(selectedBill.paymentStatus)}</Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.billDetailSection}>
+                  <Text style={styles.detailSectionTitle}>Quantity & Pricing</Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Quantity:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.quantity} {selectedBill.unit}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Unit Price:</Text>
+                    <Text style={styles.detailValue}>₹{parseFloat(selectedBill.unitPrice || 0).toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Subtotal:</Text>
+                    <Text style={styles.detailValue}>₹{parseFloat(selectedBill.subtotal || 0).toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Discount:</Text>
+                    <Text style={styles.detailValue}>₹{parseFloat(selectedBill.discountAmount || 0).toFixed(2)} ({selectedBill.discountPercentage || 0}%)</Text>
+                  </View>
+                  <View style={[styles.detailRow, styles.totalRow]}>
+                    <Text style={styles.totalLabel}>Total Amount:</Text>
+                    <Text style={styles.totalValue}>₹{parseFloat(selectedBill.totalAmount || 0).toFixed(2)}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.billDetailSection}>
+                  <Text style={styles.detailSectionTitle}>Delivery Information</Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Address:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.deliveryAddress || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Pincode:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.pincode || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Vehicle:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.vehicleName || 'N/A'}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Vehicle Number:</Text>
+                    <Text style={styles.detailValue}>{selectedBill.vehicleNumber || 'N/A'}</Text>
+                  </View>
+                </View>
+
+                {selectedBill.paymentStatus === 'successful' && (
+                  <View style={styles.billDetailSection}>
+                    <Text style={styles.detailSectionTitle}>Payment Information</Text>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Payment Method:</Text>
+                      <Text style={styles.detailValue}>{selectedBill.paymentMethod || 'N/A'}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Transaction ID:</Text>
+                      <Text style={styles.detailValue}>{selectedBill.transactionId || 'N/A'}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Payment Date:</Text>
+                      <Text style={styles.detailValue}>{formatDate(selectedBill.paymentDate)}</Text>
+                    </View>
+                  </View>
+                )}
+
+                {selectedBill.additionalNotes && (
+                  <View style={styles.billDetailSection}>
+                    <Text style={styles.detailSectionTitle}>Additional Notes</Text>
+                    <Text style={styles.notesText}>{selectedBill.additionalNotes}</Text>
+                  </View>
+                )}
+
+                {selectedBill.paymentStatus === 'pending' && (
+                  <TouchableOpacity
+                    style={styles.payButton}
+                    onPress={() => setShowPaymentModal(true)}
+                  >
+                    <Icon name="payment" size={20} color="#fff" />
+                    <Text style={styles.payButtonText}>Mark as Paid</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Payment Modal */}
+      <Modal
+        visible={showPaymentModal}
+        animationType="slide"
+        presentationStyle="formSheet"
+      >
+        <SafeAreaView style={styles.paymentModalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Payment Details</Text>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setShowPaymentModal(false)}
+            >
+              <Icon name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.paymentForm}>
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Payment Method *</Text>
+              <View style={styles.paymentMethodContainer}>
+                {paymentMethods.map((method) => (
+                  <TouchableOpacity
+                    key={method}
+                    style={[
+                      styles.paymentMethodButton,
+                      paymentData.paymentMethod === method && styles.selectedPaymentMethod
+                    ]}
+                    onPress={() => setPaymentData({...paymentData, paymentMethod: method})}
+                  >
+                    <Text style={[
+                      styles.paymentMethodText,
+                      paymentData.paymentMethod === method && styles.selectedPaymentMethodText
+                    ]}>
+                      {method}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Transaction ID</Text>
+              <TextInput
+                style={styles.textInput}
+                value={paymentData.transactionId}
+                onChangeText={(text) => setPaymentData({...paymentData, transactionId: text})}
+                placeholder="Enter transaction ID (optional)"
+                placeholderTextColor="#999"
+              />
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Payment Notes</Text>
+              <TextInput
+                style={[styles.textInput, styles.textArea]}
+                value={paymentData.paymentNotes}
+                onChangeText={(text) => setPaymentData({...paymentData, paymentNotes: text})}
+                placeholder="Enter any additional notes (optional)"
+                placeholderTextColor="#999"
+                multiline
+                numberOfLines={3}
+              />
+            </View>
+
+            <TouchableOpacity style={styles.confirmPaymentButton} onPress={handlePayment}>
+              <Text style={styles.confirmPaymentText}>Confirm Payment</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -724,276 +686,382 @@ const CustomerScreen = ({ route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFF7ED',
+    backgroundColor: '#f5f5f5'
   },
-  backgroundContainer: {
+  loadingContainer: {
     flex: 1,
-    backgroundColor: '#FEF3E2',
-    padding: 16,
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    marginBottom: 20,
-    backgroundColor: 'white',
-    borderRadius: 25,
-    padding: 4,
-    shadowColor: '#FB923C',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-    borderWidth: 1,
-    borderColor: '#FDBA74',
-  },
-  modernTab: {
-    flex: 1,
-    borderRadius: 21,
-    overflow: 'hidden',
-  },
-  tabContent: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 21,
-  },
-  activeTabContent: {
-    backgroundColor: '#FB923C',
-  },
-  tabText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#A16207',
-  },
-  activeTabText: {
-    color: 'white',
-    fontWeight: '700',
-  },
-  modernCard: {
-    backgroundColor: 'white',
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#FB923C',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 8,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#FDBA74',
-  },
-  cardHeader: {
-    backgroundColor: '#FB923C',
-    paddingVertical: 20,
-    paddingHorizontal: 24,
     alignItems: 'center',
+    backgroundColor: '#f5f5f5'
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#666'
+  },
+  header: {
+    backgroundColor: '#007bff',
+    paddingTop: 10,
+    paddingBottom: 20,
+    paddingHorizontal: 20
+  },
+  headerContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center'
   },
-  cardTitle: {
-    color: 'white',
+  userInfo: {
+    flex: 1
+  },
+  welcomeText: {
+    color: '#fff',
+    fontSize: 14,
+    opacity: 0.9
+  },
+  userName: {
+    color: '#fff',
     fontSize: 20,
-    fontWeight: '700',
-    textAlign: 'center',
+    fontWeight: 'bold'
+  },
+  logoutButton: {
+    padding: 8
+  },
+  scrollView: {
     flex: 1,
+    padding: 20
   },
-  refreshButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20
   },
-  refreshButtonText: {
-    color: 'white',
+  statCard: {
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 5
+  },
+  statLabel: {
     fontSize: 12,
-    fontWeight: '600',
+    color: '#666',
+    marginTop: 5
   },
-  cardContent: {
-    padding: 24,
+  amountContainer: {
+    flexDirection: 'row',
+    marginBottom: 20
   },
-  inputGroup: {
+  amountCard: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 10,
+    flex: 1,
+    marginHorizontal: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
+  },
+  amountLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5
+  },
+  amountValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333'
+  },
+  pendingAmount: {
+    color: '#ffc107'
+  },
+  supportContainer: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 10,
     marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
   },
-  modernInput: {
-    backgroundColor: 'white',
+  supportTitle: {
     fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10
   },
-  readOnlyInput: {
-    backgroundColor: '#FEF3E2',
-  },
-  modernButton: {
-    backgroundColor: '#EA580C',
-    marginHorizontal: 0,
-    paddingVertical: 18,
-    borderRadius: 16,
-    shadowColor: '#EA580C',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: '#FB923C',
-    marginBottom: 16,
-  },
-  buttonContainer: {
+  supportButton: {
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 10
   },
-  buttonText: {
-    color: '#FFFFFF',
+  supportText: {
+    fontSize: 16,
+    color: '#007bff',
+    marginLeft: 10,
+    fontWeight: '500'
+  },
+  billsSection: {
+    marginBottom: 20
+  },
+  sectionTitle: {
     fontSize: 18,
-    fontWeight: '700',
-  },
-  cancelButton: {
-    backgroundColor: '#6B7280',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  cancelButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 15
   },
   emptyState: {
+    backgroundColor: '#fff',
+    padding: 40,
+    borderRadius: 10,
     alignItems: 'center',
-    paddingVertical: 40,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
   },
-  emptyStateIcon: {
-    fontSize: 48,
-    marginBottom: 16,
-  },
-  emptyStateTitle: {
+  emptyStateText: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#A16207',
-    marginBottom: 8,
+    fontWeight: 'bold',
+    color: '#666',
+    marginTop: 15
   },
-  emptyStateSubtitle: {
+  emptyStateSubtext: {
     fontSize: 14,
-    color: '#A16207',
-    opacity: 0.7,
-    textAlign: 'center',
-    lineHeight: 20,
+    color: '#999',
+    marginTop: 5,
+    textAlign: 'center'
   },
-  materialCard: {
-    backgroundColor: '#FEF3E2',
-    borderRadius: 12,
-    marginBottom: 16,
+  billCard: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 10,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3
+  },
+  billHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 15
+  },
+  billInfo: {
+    flex: 1
+  },
+  billNumber: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333'
+  },
+  materialName: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2
+  },
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20
+  },
+  statusText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+  billDetails: {
+    marginBottom: 15
+  },
+  billDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 5
+  },
+  billDetailLabel: {
+    fontSize: 14,
+    color: '#666'
+  },
+  billDetailValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500'
+  },
+  billFooter: {
+    alignItems: 'flex-end'
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#fff'
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee'
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333'
+  },
+  closeButton: {
+    padding: 5
+  },
+  modalContent: {
+    flex: 1,
+    padding: 20
+  },
+  billDetailSection: {
+    marginBottom: 25
+  },
+  detailSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 15
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0'
+  },
+  detailLabel: {
+    fontSize: 14,
+    color: '#666',
+    flex: 1
+  },
+  detailValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+    flex: 1,
+    textAlign: 'right'
+  },
+  totalRow: {
+    borderTopWidth: 2,
+    borderTopColor: '#007bff',
+    marginTop: 10,
+    paddingTop: 10
+  },
+  totalLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333'
+  },
+  totalValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#007bff'
+  },
+  notesText: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20
+  },
+  payButton: {
+    backgroundColor: '#28a745',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 10,
+    marginTop: 20
+  },
+  payButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 10
+  },
+  paymentModalContainer: {
+    flex: 1,
+    backgroundColor: '#fff'
+  },
+  paymentForm: {
+    flex: 1,
+    padding: 20
+  },
+  inputContainer: {
+    marginBottom: 20
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 10
+  },
+  paymentMethodContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10
+  },
+  paymentMethodButton: {
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#FDBA74',
+    borderColor: '#ddd',
+    backgroundColor: '#fff'
   },
-  // Add these missing styles to your existing StyleSheet.create({}) object:
-
-materialHeader: {
-  flexDirection: 'row',
-  justifyContent: 'space-between',
-  alignItems: 'flex-start',
-  marginBottom: 12,
-},
-
-materialName: {
-  flex: 1,
-  fontSize: 18,
-  fontWeight: '700',
-  color: '#C2410C',
-  marginRight: 12,
-},
-
-materialActions: {
-  flexDirection: 'row',
-  gap: 8,
-},
-
-editButton: {
-  backgroundColor: '#3B82F6',
-  paddingHorizontal: 12,
-  paddingVertical: 6,
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: '#60A5FA',
-},
-
-editButtonText: {
-  color: 'white',
-  fontSize: 12,
-  fontWeight: '600',
-},
-
-deleteButton: {
-  backgroundColor: '#DC2626',
-  paddingHorizontal: 12,
-  paddingVertical: 6,
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: '#F87171',
-},
-
-deleteButtonText: {
-  color: 'white',
-  fontSize: 12,
-  fontWeight: '600',
-},
-
-materialDetails: {
-  marginBottom: 12,
-  paddingVertical: 8,
-  borderTopWidth: 1,
-  borderTopColor: '#FDBA74',
-},
-
-materialDetailText: {
-  fontSize: 14,
-  color: '#A16207',
-  marginBottom: 4,
-  fontWeight: '500',
-},
-
-materialTotalPrice: {
-  fontSize: 16,
-  fontWeight: '700',
-  color: '#EA580C',
-  marginBottom: 4,
-},
-
-materialLocations: {
-  marginBottom: 12,
-  paddingVertical: 8,
-  borderTopWidth: 1,
-  borderTopColor: '#FDBA74',
-},
-
-locationText: {
-  fontSize: 13,
-  color: '#92400E',
-  marginBottom: 4,
-  fontWeight: '500',
-},
-
-materialImageContainer: {
-  marginTop: 12,
-  borderRadius: 8,
-  overflow: 'hidden',
-  borderWidth: 1,
-  borderColor: '#FDBA74',
-},
-
-materialImage: {
-  width: '100%',
-  height: 120,
-  borderRadius: 8,
-},
-
-activeModernTab: {
-  // This style is handled by activeTabContent, but you can add specific tab styling here if needed
-  shadowColor: '#FB923C',
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.2,
-  shadowRadius: 4,
-  elevation: 3,
-}
+  selectedPaymentMethod: {
+    backgroundColor: '#007bff',
+    borderColor: '#007bff'
+  },
+  paymentMethodText: {
+    fontSize: 14,
+    color: '#666'
+  },
+  selectedPaymentMethodText: {
+    color: '#fff'
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fff'
+  },
+  textArea: {
+    height: 80,
+    textAlignVertical: 'top'
+  },
+  confirmPaymentButton: {
+    backgroundColor: '#28a745',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 20
+  },
+  confirmPaymentText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold'
+  }
 });
 
 export default CustomerScreen;

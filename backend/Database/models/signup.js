@@ -31,10 +31,27 @@ const SignUp = sequelize.define("SignUp", {
     type: DataTypes.INTEGER,
     allowNull: false,
     unique: true
-  }
+  },
+  isApproved: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+  },
+  approvedBy: {
+    type: DataTypes.INTEGER, // Admin ID if needed
+    allowNull: true,
+  },
+  status: {
+    type: DataTypes.STRING,
+    defaultValue: 'pending', // 'pending', 'approved', 'rejected'
+  },
+
+
+
 }, {
   tableName: "SignUp",
   timestamps: false,
 });
+
+
 
 module.exports = SignUp;
