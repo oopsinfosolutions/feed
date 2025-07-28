@@ -10,7 +10,7 @@ const fs = require('fs');
 const Bill = require('./models/bill');
 require("dotenv").config();
 
-
+// Set up associations
 Bill.belongsTo(SignUp, { foreignKey: 'clientId', as: 'Client' });
 Bill.belongsTo(Material, { foreignKey: 'orderId', as: 'Order' });
 Bill.belongsTo(SignUp, { foreignKey: 'createdBy', as: 'Creator' });
@@ -18,12 +18,12 @@ Bill.belongsTo(SignUp, { foreignKey: 'createdBy', as: 'Creator' });
 SignUp.hasMany(Bill, { foreignKey: 'clientId', as: 'Bills' });
 Material.hasOne(Bill, { foreignKey: 'orderId', as: 'Bill' });
 
+// Set up associations for Material and SignUp
+Material.belongsTo(SignUp, { foreignKey: 'c_id', as: 'Client' });
+SignUp.hasMany(Material, { foreignKey: 'c_id', as: 'Materials' });
+
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-
-
-
 
 // Multer configuration for file uploads
 const storage = multer.diskStorage({
@@ -36,13 +36,17 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-
+// Middleware
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // =================================================================
-// HELPER FUNCTIONS - Add these after middleware setup
+// HELPER FUNCTIONS
 // =================================================================
 
-// Helper function for generating user ID (existing function)
+// Helper function for generating user ID
 async function generateUserId() {
   while (true) {
     const timestamp = Date.now();
@@ -82,36 +86,54 @@ function generateBillNumber() {
 }
 
 // =================================================================
-// ROUTES START HERE
+// AUTHENTICATION ROUTES
 // =================================================================
 
-
-
-
-// Middleware
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Helper function for generating user ID
-async function generateUserId() {
-  while (true) {
-    const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 1000);
-    const id = `USER_${timestamp}_${random}`;
-    const existing = await SignUp.findOne({ where: { user_id: id } });
-    if (!existing) return id;
-  }
-}
-
-// Signup Route - Updated
+// Enhanced signup route with approval workflow
 app.post('/signup', async (req, res) => {
   try {
-    const { fullname, email, password, phone, type } = req.body;
+    const { fullname, email, password, phone, type, department, employeeId } = req.body;
 
     if (!fullname || !email || !phone || !password || !type) {
-      return res.status(400).json({ error: 'All fields are required' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'All fields are required' 
+      });
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Please enter a valid email address' 
+      });
+    }
+
+    // Phone validation
+    const phoneRegex = /^\d{10}$/;
+    if (!phoneRegex.test(phone.replace(/\D/g, ''))) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Please enter a valid 10-digit phone number' 
+      });
+    }
+
+    // Check for existing user
+    const existingUser = await SignUp.findOne({
+      where: {
+        [Op.or]: [
+          { email: email },
+          { phone: phone }
+        ]
+      }
+    });
+
+    if (existingUser) {
+      return res.status(409).json({ 
+        success: false,
+        error: 'Email or phone number already exists' 
+      });
     }
 
     const user_id = await generateUserId();
@@ -123,69 +145,156 @@ app.post('/signup', async (req, res) => {
       phone,
       type,
       user_id,
+      department: department || null,
+      employeeId: employeeId || null
     };
 
-    // Define employee types that need approval (excluding admin and client)
-    const employeeTypesNeedingApproval = ['employee', 'officeemp', 'sale_parchase'];
+    // Define employee types that need approval
+    const employeeTypesNeedingApproval = [
+      'field_employee', 
+      'office_employee', 
+      'sale_parchase',
+      'sale_purchase',
+      'sales_purchase'
+    ];
     
-    // If user is an employee type, mark as not approved
-    if (employeeTypesNeedingApproval.includes(type.toLowerCase())) {
+    // Normalize type for comparison
+    const normalizedType = type.toLowerCase().replace(/\s+/g, '_');
+    
+    if (employeeTypesNeedingApproval.includes(normalizedType)) {
       userData.isApproved = false;
-      userData.status = 'pending';
+      userData.status = 'pending_approval';
+      userData.approvalRequired = true;
+      userData.submittedAt = new Date();
     } else {
       // Admin, client, dealer get automatic approval
       userData.isApproved = true;
       userData.status = 'approved';
+      userData.approvalRequired = false;
+      userData.approvedAt = new Date();
     }
 
     const user = await SignUp.create(userData);
 
-    if (userData.status === 'pending') {
-      return res.json({ message: 'Signup request sent to admin for approval', user });
+    // Send appropriate response based on approval requirement
+    if (userData.status === 'pending_approval') {
+      // Send notification to admin (you can implement email/SMS here)
+      console.log(`New employee signup pending approval: ${fullname} (${type})`);
+      
+      return res.status(201).json({ 
+        success: true,
+        message: 'Registration submitted successfully. Your account is pending admin approval. You will be notified once approved.',
+        requiresApproval: true,
+        user: {
+          id: user.id,
+          fullname: user.fullname,
+          email: user.email,
+          type: user.type,
+          status: user.status
+        }
+      });
     }
 
-    res.json({ message: 'User registered successfully', user });
+    res.status(201).json({ 
+      success: true,
+      message: 'User registered successfully. You can now login.',
+      requiresApproval: false,
+      user: {
+        id: user.id,
+        fullname: user.fullname,
+        email: user.email,
+        type: user.type,
+        status: user.status
+      }
+    });
+
   } catch (error) {
     console.error('Signup Error:', error);
-    res.status(500).json({ error: 'Something went wrong' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error. Please try again.' 
+    });
   }
 });
 
-// Login Route - Updated
+// Enhanced login route with approval check
 app.post('/login', async (req, res) => {
   try {
     const { phone, password } = req.body;
 
     if (!phone || !password) {
-      return res.status(400).json({ error: 'Phone and password are required' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Phone and password are required' 
+      });
     }
 
-    const user = await SignUp.findOne({ where: { phone, password } });
+    const user = await SignUp.findOne({ 
+      where: { 
+        phone: phone.replace(/\D/g, ''), 
+        password 
+      } 
+    });
 
     if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      return res.status(401).json({ 
+        success: false,
+        error: 'Invalid phone number or password' 
+      });
     }
 
-    // Define employee types that need approval (excluding admin and client)
-    const employeeTypesNeedingApproval = ['employee', 'officeemp', 'sale_parchase'];
+    // Check approval status for employee types
+    const employeeTypesNeedingApproval = [
+      'field_employee', 
+      'office_employee', 
+      'sale_parchase',
+      'sale_purchase',
+      'sales_purchase'
+    ];
     
-    // Only check approval status for employee types, not for admin/client/dealer
-    if (employeeTypesNeedingApproval.includes(user.type.toLowerCase()) && !user.isApproved) {
-      return res.status(401).json({ error: 'Your account is pending approval' });
+    const normalizedType = user.type.toLowerCase().replace(/\s+/g, '_');
+    
+    if (employeeTypesNeedingApproval.includes(normalizedType)) {
+      if (!user.isApproved || user.status !== 'approved') {
+        let message = 'Your account is pending approval from admin.';
+        
+        if (user.status === 'rejected') {
+          message = 'Your account has been rejected. Please contact admin for more information.';
+        } else if (user.status === 'suspended') {
+          message = 'Your account has been suspended. Please contact admin.';
+        }
+        
+        return res.status(403).json({ 
+          success: false,
+          error: message,
+          accountStatus: user.status
+        });
+      }
     }
+
+    // Update last login
+    await user.update({ lastLoginAt: new Date() });
 
     const { password: _, ...userWithoutPassword } = user.toJSON();
-    res.json(userWithoutPassword);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      ...userWithoutPassword
+    });
+
   } catch (error) {
     console.error('Login Error:', error);
-    res.status(500).json({ error: 'Something went wrong' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error' 
+    });
   }
 });
 
-
-
-// AUTH ROUTES
-
+// =================================================================
+// USER MANAGEMENT ROUTES
+// =================================================================
 
 // Get Users Route - Compatible with Users.js component
 app.get('/Users', async (req, res) => {
@@ -362,14 +471,188 @@ app.delete('/users/:userId', async (req, res) => {
   }
 });
 
-
-
-
-// Add these routes to your server.js file after the existing user management routes
-
 // =================================================================
-// EMPLOYEE APPROVAL ROUTES
+// ADMIN APPROVAL WORKFLOW ENHANCEMENTS
 // =================================================================
+
+// Get pending employee approvals with enhanced details
+app.get('/api/admin/pending-employee-approvals', async (req, res) => {
+  try {
+    const { page = 1, limit = 20, type } = req.query;
+    const offset = (page - 1) * limit;
+
+    let whereClause = {
+      [Op.and]: [
+        {
+          [Op.or]: [
+            { isApproved: false },
+            { isApproved: null }
+          ]
+        },
+        {
+          status: 'pending_approval'
+        },
+        {
+          type: {
+            [Op.in]: ['field_employee', 'office_employee', 'sale_parchase', 'sale_purchase', 'sales_purchase']
+          }
+        }
+      ]
+    };
+
+    if (type && type !== 'all') {
+      whereClause[Op.and].push({ type: type });
+    }
+
+    const { count, rows: pendingUsers } = await SignUp.findAndCountAll({
+      where: whereClause,
+      order: [['submittedAt', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      attributes: [
+        'id', 'fullname', 'email', 'phone', 'type', 'user_id', 
+        'status', 'isApproved', 'department', 'employeeId',
+        'submittedAt', 'createdAt'
+      ]
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Pending approvals fetched successfully',
+      data: {
+        pendingUsers,
+        pagination: {
+          total: count,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(count / limit),
+          hasNext: offset + pendingUsers.length < count,
+          hasPrev: page > 1
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching pending approvals:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Approve employee with notification
+app.post('/api/admin/approve-employee/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { adminId, approvalNote } = req.body;
+
+    const user = await SignUp.findOne({
+      where: {
+        [Op.or]: [
+          { id: userId },
+          { user_id: userId }
+        ],
+        status: 'pending_approval'
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pending user not found'
+      });
+    }
+
+    if (user.isApproved) {
+      return res.status(400).json({
+        success: false,
+        message: 'User is already approved'
+      });
+    }
+
+    const updatedUser = await user.update({
+      isApproved: true,
+      status: 'approved',
+      approvedBy: adminId || 'admin',
+      approvedAt: new Date(),
+      approvalNote: approvalNote || 'Approved by admin'
+    });
+
+    // Here you can send notification to user (email/SMS)
+    console.log(`Employee approved: ${user.fullname} (${user.email})`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Employee approved successfully',
+      data: updatedUser
+    });
+
+  } catch (error) {
+    console.error('Error approving employee:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Reject employee with reason
+app.post('/api/admin/reject-employee/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { adminId, rejectionReason } = req.body;
+
+    if (!rejectionReason || rejectionReason.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Rejection reason is required'
+      });
+    }
+
+    const user = await SignUp.findOne({
+      where: {
+        [Op.or]: [
+          { id: userId },
+          { user_id: userId }
+        ],
+        status: 'pending_approval'
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pending user not found'
+      });
+    }
+
+    const updatedUser = await user.update({
+      status: 'rejected',
+      rejectedBy: adminId || 'admin',
+      rejectedAt: new Date(),
+      rejectionReason: rejectionReason.trim()
+    });
+
+    // Here you can send notification to user (email/SMS)
+    console.log(`Employee rejected: ${user.fullname} (${user.email}) - Reason: ${rejectionReason}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Employee registration rejected',
+      data: updatedUser
+    });
+
+  } catch (error) {
+    console.error('Error rejecting employee:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
 
 // GET: Fetch pending approval requests (for admin)
 app.get('/api/admin/pending-approvals', async (req, res) => {
@@ -382,10 +665,11 @@ app.get('/api/admin/pending-approvals', async (req, res) => {
         ],
         [Op.or]: [
           { status: 'pending' },
-          { status: 'Pending' }
+          { status: 'Pending' },
+          { status: 'pending_approval' }
         ],
         type: {
-          [Op.in]: ['employee', 'officeemp', 'sale_parchase'] // FIXED: Using correct spelling
+          [Op.in]: ['employee', 'officeemp', 'sale_parchase', 'field_employee', 'office_employee', 'sale_purchase', 'sales_purchase']
         }
       },
       order: [['id', 'DESC']],
@@ -393,13 +677,6 @@ app.get('/api/admin/pending-approvals', async (req, res) => {
     });
 
     console.log('Found pending users:', pendingUsers.length);
-    console.log('Pending users data:', pendingUsers.map(u => ({
-      id: u.id,
-      fullname: u.fullname,
-      type: u.type,
-      status: u.status,
-      isApproved: u.isApproved
-    })));
 
     res.status(200).json({
       success: true,
@@ -467,7 +744,7 @@ app.post('/api/admin/approve-user/:userId', async (req, res) => {
   }
 });
 
-// POST: Reject employee signup request (SIMPLE VERSION)
+// POST: Reject employee signup request
 app.post('/api/admin/reject-user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -517,228 +794,11 @@ app.post('/api/admin/reject-user/:userId', async (req, res) => {
   }
 });
 
-// GET: Get approval statistics for admin dashboard
-app.get('/api/admin/approval-stats', async (req, res) => {
-  try {
-    const totalPending = await SignUp.count({
-      where: {
-        [Op.or]: [
-          { isApproved: false },
-          { isApproved: null }
-        ],
-        [Op.or]: [
-          { status: 'pending' },
-          { status: 'Pending' }
-        ],
-        type: {
-          [Op.in]: ['employee', 'officeemp', 'sale_parchase'] // FIXED: Using correct spelling
-        }
-      }
-    });
+// =================================================================
+// MATERIAL/DATA MANAGEMENT ROUTES
+// =================================================================
 
-    const totalApproved = await SignUp.count({
-      where: {
-        isApproved: true,
-        [Op.or]: [
-          { status: 'approved' },
-          { status: 'Approved' }
-        ],
-        type: {
-          [Op.in]: ['employee', 'officeemp', 'sale_parchase'] // FIXED: Using correct spelling
-        }
-      }
-    });
-
-    const totalRejected = await SignUp.count({
-      where: {
-        [Op.or]: [
-          { status: 'rejected' },
-          { status: 'Rejected' }
-        ],
-        type: {
-          [Op.in]: ['employee', 'officeemp', 'sale_parchase'] // FIXED: Using correct spelling
-        }
-      }
-    });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        totalPending,
-        totalApproved,
-        totalRejected
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching approval stats:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// GET: Get user approval history (for admin)
-app.get('/api/admin/approval-history', async (req, res) => {
-  try {
-    const { page = 1, limit = 50, status } = req.query;
-    const offset = (page - 1) * limit;
-
-    let whereClause = {
-      type: {
-        // Updated to match the actual format in your database
-        [Op.in]: ['employee', 'officeemp', 'sale_purchase', 'Sale Parchase', 'sale_parchase']
-      }
-    };
-
-    if (status && status !== 'all') {
-      whereClause.status = status;
-    }
-
-    const { count, rows: users } = await SignUp.findAndCountAll({
-      where: whereClause,
-      order: [['id', 'DESC']], // Using id instead of createdAt
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      attributes: [
-        'id', 'fullname', 'email', 'phone', 'type', 'user_id', 
-        'status', 'isApproved', 'approvedBy'
-      ]
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Approval history fetched successfully',
-      data: {
-        users,
-        pagination: {
-          total: count,
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(count / limit),
-          hasNext: offset + users.length < count,
-          hasPrev: page > 1
-        }
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching approval history:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// PATCH: Bulk approve/reject users
-app.patch('/api/admin/bulk-approval', async (req, res) => {
-  try {
-    const { userIds, action, adminId, note } = req.body;
-
-    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'User IDs array is required'
-      });
-    }
-
-    if (!['approve', 'reject'].includes(action)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Action must be either "approve" or "reject"'
-      });
-    }
-
-    let updateData = {};
-    
-    if (action === 'approve') {
-      updateData = {
-        isApproved: true,
-        status: 'approved',
-        approvedBy: adminId || 'admin'
-      };
-    } else {
-      updateData = {
-        status: 'rejected'
-      };
-    }
-
-    const [updatedCount] = await SignUp.update(updateData, {
-      where: {
-        [Op.or]: [
-          { id: { [Op.in]: userIds } },
-          { user_id: { [Op.in]: userIds } }
-        ],
-        [Op.or]: [
-          { isApproved: false },
-          { isApproved: null }
-        ],
-        [Op.or]: [
-          { status: 'pending' },
-          { status: 'Pending' }
-        ]
-      }
-    });
-
-    res.status(200).json({
-      success: true,
-      message: `Successfully ${action}d ${updatedCount} users`,
-      updatedCount
-    });
-  } catch (error) {
-    console.error('Error in bulk approval:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// DELETE: Delete rejected user permanently
-app.delete('/api/admin/delete-rejected/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-
-    // Find the user by ID or user_id
-    const user = await SignUp.findOne({
-      where: {
-        [Op.or]: [
-          { id: userId },
-          { user_id: userId }
-        ],
-        status: 'rejected' // Only allow deletion of rejected users
-      }
-    });
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'Rejected user not found'
-      });
-    }
-
-    await user.destroy();
-
-    res.status(200).json({
-      success: true,
-      message: 'Rejected user deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting rejected user:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-
-// ADMIN ROUTES - MATERIALS
 // GET: Fetch all data with filtering and sorting options - FIXED
-// Fixed API routes with proper column selection
 app.get('/api/admin/all-data', async (req, res) => {
   try {
     const { 
@@ -768,16 +828,15 @@ app.get('/api/admin/all-data', async (req, res) => {
     // Search functionality - FIXED
     if (search) {
       whereClause[Op.or] = [
-        { name: { [Op.iLike]: `%${search}%` } },
-        { phone: { [Op.iLike]: `%${search}%` } },
-        { address: { [Op.iLike]: `%${search}%` } },
-        { detail: { [Op.iLike]: `%${search}%` } }
+        { name: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+        { address: { [Op.like]: `%${search}%` } },
+        { detail: { [Op.like]: `%${search}%` } }
       ];
     }
 
     const offset = (page - 1) * limit;
     
-    // FIX: Specify only the columns that exist in your table
     const { count, rows: materials } = await Material.findAndCountAll({
       where: whereClause,
       order: [[sortBy, sortOrder]],
@@ -856,68 +915,7 @@ app.get('/api/admin/all-data', async (req, res) => {
   }
 });
 
-// GET: Fetch single record by ID
-app.get('/api/admin/data/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const material = await Material.findByPk(id, {
-      attributes: [
-        'id',
-        'detail',
-        'price_per_unit',
-        'total_price',
-        'destination',
-        'pickup_location',
-        'drop_location',
-        'c_id',
-        'e_id',
-        'status',
-        'image1',
-        'image2',
-        'image3',
-        'video',
-        'video1',
-        'video2',
-        'video3',
-        'address',
-        'pincode',
-        'latitude',
-        'longitude',
-        'name',
-        'phone',
-        'unit',
-        'quantity',
-        'offer',
-        'need_product',
-        'shipment_date',
-        'createdAt',
-        'updatedAt'
-      ]
-    });
-    
-    if (!material) {
-      return res.status(404).json({
-        success: false,
-        message: 'Record not found'
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Data fetched successfully',
-      data: material
-    });
-  } catch (error) {
-    console.error('Error fetching data:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
+// PUT: Update status of material
 app.put('/api/admin/update-status/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -957,441 +955,7 @@ app.put('/api/admin/update-status/:id', async (req, res) => {
   }
 });
 
-// PUT: Update any record by ID
-app.put('/api/admin/update/:id', upload.fields([
-  { name: 'image1' }, { name: 'image2' }, { name: 'image3' },
-  { name: 'video1' }, { name: 'video2' }, { name: 'video3' }
-]), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const {
-      name, phone, address, pincode,
-      latitude, longitude, detail, status,
-      price_per_unit, total_price, destination,
-      pickup_location, drop_location, unit, quantity
-    } = req.body;
-
-    const material = await Material.findByPk(id);
-    
-    if (!material) {
-      return res.status(404).json({
-        success: false,
-        message: 'Record not found'
-      });
-    }
-
-    // Handle file uploads - keep existing files if no new ones uploaded
-    const updateData = {
-      name: name || material.name,
-      phone: phone || material.phone,
-      address: address || material.address,
-      pincode: pincode || material.pincode,
-      latitude: latitude || material.latitude,
-      longitude: longitude || material.longitude,
-      detail: detail || material.detail,
-      status: status || material.status,
-      price_per_unit: price_per_unit || material.price_per_unit,
-      total_price: total_price || material.total_price,
-      destination: destination || material.destination,
-      pickup_location: pickup_location || material.pickup_location,
-      drop_location: drop_location || material.drop_location,
-      unit: unit || material.unit,
-      quantity: quantity || material.quantity
-    };
-
-    // Update file fields only if new files are uploaded
-    if (req.files) {
-      updateData.image1 = req.files['image1']?.[0]?.filename || material.image1;
-      updateData.image2 = req.files['image2']?.[0]?.filename || material.image2;
-      updateData.image3 = req.files['image3']?.[0]?.filename || material.image3;
-      updateData.video1 = req.files['video1']?.[0]?.filename || material.video1;
-      updateData.video2 = req.files['video2']?.[0]?.filename || material.video2;
-      updateData.video3 = req.files['video3']?.[0]?.filename || material.video3;
-    }
-
-    const updatedMaterial = await material.update(updateData);
-
-    res.status(200).json({
-      success: true,
-      message: 'Record updated successfully',
-      data: updatedMaterial
-    });
-
-  } catch (error) {
-    console.error('Error updating record:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// DELETE: Delete record by ID
-app.delete('/api/admin/delete/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const material = await Material.findByPk(id);
-    
-    if (!material) {
-      return res.status(404).json({
-        success: false,
-        message: 'Record not found'
-      });
-    }
-
-    // Delete associated files
-    const filesToDelete = [
-      material.image1, material.image2, material.image3,
-      material.video1, material.video2, material.video3
-    ].filter(Boolean);
-
-    filesToDelete.forEach(filename => {
-      const filePath = path.join('uploads', filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    });
-
-    await material.destroy();
-
-    res.status(200).json({
-      success: true,
-      message: 'Record deleted successfully'
-    });
-
-  } catch (error) {
-    console.error('Error deleting record:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// Add this function to check your database schema
-app.get('/api/admin/check-schema', async (req, res) => {
-  try {
-    const [results] = await sequelize.query(`
-      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_NAME = 'shipment_details' 
-      AND TABLE_SCHEMA = 'feed'
-      ORDER BY ORDINAL_POSITION
-    `);
-    
-    res.json({
-      success: true,
-      message: 'Database schema retrieved successfully',
-      columns: results
-    });
-  } catch (error) {
-    console.error('Error checking schema:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// PATCH: Update status of multiple records
-app.patch('/api/admin/bulk-status', async (req, res) => {
-  try {
-    const { ids, status } = req.body;
-    
-    if (!ids || !Array.isArray(ids) || !status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid request. Provide ids array and status'
-      });
-    }
-
-    const updatedCount = await Material.update(
-      { status },
-      { where: { id: ids } }
-    );
-
-    res.status(200).json({
-      success: true,
-      message: `Updated ${updatedCount[0]} records successfully`,
-      updated: updatedCount[0]
-    });
-
-  } catch (error) {
-    console.error('Error updating bulk status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// GET: Dashboard statistics - FIXED
-app.get('/api/admin/dashboard', async (req, res) => {
-  try {
-    const totalRecords = await Material.count();
-    
-    const employeeRecords = await Material.count({
-      where: {
-        [Op.or]: [
-          { image1: { [Op.not]: null } },
-          { image2: { [Op.not]: null } },
-          { image3: { [Op.not]: null } },
-          { video1: { [Op.not]: null } },
-          { video2: { [Op.not]: null } },
-          { video3: { [Op.not]: null } }
-        ]
-      }
-    });
-    
-    const officeRecords = totalRecords - employeeRecords;
-    
-    const statusCounts = await Material.findAll({
-      attributes: [
-        'status',
-        [sequelize.fn('COUNT', sequelize.col('status')), 'count']
-      ],
-      group: ['status']
-    });
-
-    const recentRecords = await Material.findAll({
-      order: [['createdAt', 'DESC']],
-      limit: 10
-    });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        summary: {
-          total: totalRecords,
-          employee: employeeRecords,
-          office: officeRecords
-        },
-        statusBreakdown: statusCounts,
-        recentActivity: recentRecords
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching dashboard data:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// GET: Export data to CSV - FIXED
-app.get('/api/admin/export', async (req, res) => {
-  try {
-    const { format = 'json', source } = req.query;
-    
-    let whereClause = {};
-    
-    if (source === 'employee') {
-      whereClause.image1 = { [Op.not]: null };
-    } else if (source === 'office') {
-      whereClause.image1 = { [Op.is]: null };
-    }
-    
-    const materials = await Material.findAll({
-      where: whereClause,
-      order: [['createdAt', 'DESC']]
-    });
-
-    if (format === 'csv') {
-      const csv = materials.map(item => ({
-        ID: item.id,
-        Name: item.name,
-        Phone: item.phone,
-        Address: item.address,
-        Pincode: item.pincode,
-        Detail: item.detail,
-        Status: item.status,
-        CreatedAt: item.createdAt,
-        Source: (item.image1 || item.image2 || item.image3) ? 'Employee' : 'Office'
-      }));
-      
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=materials_export.csv');
-      
-      // Simple CSV conversion
-      const csvHeader = Object.keys(csv[0]).join(',');
-      const csvRows = csv.map(row => Object.values(row).join(','));
-      const csvContent = [csvHeader, ...csvRows].join('\n');
-      
-      res.send(csvContent);
-    } else {
-      res.status(200).json({
-        success: true,
-        data: materials
-      });
-    }
-
-  } catch (error) {
-    console.error('Error exporting data:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// ADMIN ROUTES - USER MANAGEMENT
-// GET: Fetch all users (Admin route)
-app.get('/api/admin/users', async (req, res) => {
-  try {
-    const users = await SignUp.findAll({
-      order: [['id', 'DESC']]
-    });
-    res.status(200).json({ 
-      success: true, 
-      message: 'Users fetched successfully',
-      data: users 
-    });
-  } catch (error) {
-    console.error('Error fetching users:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error', 
-      error: error.message 
-    });
-  }
-});
-
-// GET: Admin user by ID
-app.get('/api/admin/users/:id', async (req, res) => {
-  try {
-    const user = await SignUp.findByPk(req.params.id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-    res.status(200).json({ 
-      success: true, 
-      message: 'User fetched successfully',
-      data: user 
-    });
-  } catch (error) {
-    console.error('Error fetching user:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error', 
-      error: error.message 
-    });
-  }
-});
-
-// POST: Create admin user
-app.post('/api/admin/users', async (req, res) => {
-  try {
-    const { fullname, email, phone, password, type } = req.body;
-    
-    if (!fullname || !email || !phone || !password || !type) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'All fields are required: fullname, email, phone, password, type' 
-      });
-    }
-
-    const user_id = await generateUserId();
-
-    const newUser = await SignUp.create({ 
-      fullname, 
-      email, 
-      phone, 
-      password, 
-      type,
-      user_id
-    });
-
-    res.status(201).json({ 
-      success: true, 
-      message: 'User created successfully', 
-      data: newUser 
-    });
-  } catch (error) {
-    console.error('Error creating user:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error', 
-      error: error.message 
-    });
-  }
-});
-
-// PUT: Update admin user by ID - FIXED
-app.put('/api/admin/users/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { fullname, email, phone, password, type } = req.body;
-    
-    const user = await SignUp.findByPk(id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    const updatedUser = await user.update({
-      fullname: fullname || user.fullname,
-      email: email || user.email,
-      phone: phone || user.phone,
-      password: password || user.password,
-      type: type || user.type
-    });
-
-    res.status(200).json({ 
-      success: true, 
-      message: 'User updated successfully', 
-      data: updatedUser 
-    });
-  } catch (error) {
-    console.error('Error updating user:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error', 
-      error: error.message 
-    });
-  }
-});
-
-// DELETE: Admin user by ID
-app.delete('/api/admin/users/:id', async (req, res) => {
-  try {
-    const user = await SignUp.findByPk(req.params.id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    await user.destroy();
-    res.status(200).json({ 
-      success: true, 
-      message: 'User deleted successfully' 
-    });
-  } catch (error) {
-    console.error('Error deleting user:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error', 
-      error: error.message 
-    });
-  }
-});
-
-// EMPLOYEE ROUTES
-// GET: Fetch all submitted materials (Enhanced with admin features) - FIXED
+// GET: Fetch all submitted materials (Enhanced with admin features)
 app.get('/api/getdata', async (req, res) => {
   try {
     const { status, limit = 100 } = req.query;
@@ -1474,36 +1038,18 @@ app.post('/api/submit', upload.fields([
   }
 });
 
+// =================================================================
 // OFFICE ROUTES
-// POST: Add new material request from office
-// 🔹 GET: Fetch all office data (no userId needed)
-app.get('/view_details', async (req, res) => {
-  try {
-    const data = await Material.findAll({
-      where: { role: 'office' },
-      order: [['createdAt', 'DESC']]
-    });
+// =================================================================
 
-    res.status(200).json({ success: true, data });
-  } catch (error) {
-    console.error('Error fetching office data:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching office data',
-      error: error.message
-    });
-  }
-});
-
-
-// 🔹 POST: Submit material request from office
+// Fix the missing /add_details route
 app.post('/add_details', async (req, res) => {
   try {
     let { userId, name, address, phone, detail } = req.body;
 
     // Auto-generate a userId if not provided
     if (!userId) {
-      userId = 'OFF-' + Math.floor(100000 + Math.random() * 900000); // e.g., OFF-123456
+      userId = generateProductUserId(); // Use the existing function
     }
 
     if (!name || !address || !phone || !detail) {
@@ -1520,7 +1066,8 @@ app.post('/add_details', async (req, res) => {
       phone,
       detail,
       role: 'office',
-      status: 'submitted_by_office'
+      status: 'submitted_by_office',
+      productType: 'office_request'
     });
 
     res.status(201).json({
@@ -1538,221 +1085,58 @@ app.post('/add_details', async (req, res) => {
     });
   }
 });
-// Bulk Delete Details Route - For deleting multiple details at once
-app.delete('/bulk-delete-details', async (req, res) => {
+
+// Fix the missing /view_details route
+app.get('/view_details', async (req, res) => {
   try {
-    const { ids } = req.body;
-
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Array of detail IDs is required'
-      });
-    }
-
-    // Validate all IDs are valid MongoDB ObjectIds
-    const invalidIds = ids.filter(id => !id.match(/^[0-9a-fA-F]{24}$/));
-    if (invalidIds.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid ID format found in the list'
-      });
-    }
-
-    const result = await Material.deleteMany({
-      _id: { $in: ids }
+    const data = await Material.findAll({
+      where: { role: 'office' },
+      order: [['createdAt', 'DESC']]
     });
 
-    res.status(200).json({
-      success: true,
-      message: `Successfully deleted ${result.deletedCount} details`,
-      deletedCount: result.deletedCount
+    res.status(200).json({ 
+      success: true, 
+      data,
+      message: 'Office data fetched successfully'
     });
-
   } catch (error) {
-    console.error('Error bulk deleting details:', error);
+    console.error('Error fetching office data:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error',
+      message: 'Error fetching office data',
       error: error.message
     });
   }
 });
 
-// Get Details Statistics Route - For dashboard statistics
-app.get('/details-stats', async (req, res) => {
+// Add missing /counts route for AdminScreen
+app.get('/counts', async (req, res) => {
   try {
-    const totalDetails = await Material.countDocuments({});
-    
-    // Get details created today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    const todayDetails = await Material.countDocuments({
-      createdAt: {
-        $gte: today,
-        $lt: tomorrow
-      }
-    });
-
-    // Get details created this week
-    const weekStart = new Date(today);
-    weekStart.setDate(today.getDate() - today.getDay());
-    
-    const weekDetails = await Material.countDocuments({
-      createdAt: {
-        $gte: weekStart,
-        $lt: tomorrow
-      }
-    });
-
-    // Get details created this month
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    
-    const monthDetails = await Material.countDocuments({
-      createdAt: {
-        $gte: monthStart,
-        $lt: tomorrow
-      }
+    const usersCount = await SignUp.count();
+    const materialsCount = await Material.count();
+    const projectsCount = await Material.count({
+      where: { status: 'approved' }
     });
 
     res.status(200).json({
       success: true,
-      message: 'Statistics retrieved successfully',
-      data: {
-        total: totalDetails,
-        today: todayDetails,
-        thisWeek: weekDetails,
-        thisMonth: monthDetails
-      }
+      usersCount: usersCount || 0,
+      materialsCount: materialsCount || 0,
+      projectsCount: projectsCount || 0
     });
-
   } catch (error) {
-    console.error('Error fetching statistics:', error);
+    console.error('Error fetching counts:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error',
+      usersCount: 0,
+      materialsCount: 0,
+      projectsCount: 0,
       error: error.message
     });
   }
 });
 
-// PUT: Update material status by ID
-app.put('/api/materials/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status is required'
-      });
-    }
-
-    const material = await Material.findByPk(id);
-    
-    if (!material) {
-      return res.status(404).json({
-        success: false,
-        message: 'Material not found'
-      });
-    }
-
-    const updatedMaterial = await material.update({ status });
-
-    res.status(200).json({
-      success: true,
-      message: 'Material status updated successfully',
-      data: updatedMaterial
-    });
-
-  } catch (error) {
-    console.error('Error updating material status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// DELETE: Delete material by ID
-app.delete('/api/materials/:id', async (req, res) => {
-  try {
-    const material = await Material.findByPk(req.params.id);
-    
-    if (!material) {
-      return res.status(404).json({
-        success: false,
-        message: 'Material not found'
-      });
-    }
-
-    // Delete associated files
-    const filesToDelete = [
-      material.image1, material.image2, material.image3,
-      material.video1, material.video2, material.video3
-    ].filter(Boolean);
-
-    filesToDelete.forEach(filename => {
-      const filePath = path.join('uploads', filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    });
-
-    await material.destroy();
-
-    res.status(200).json({
-      success: true,
-      message: 'Material deleted successfully'
-    });
-
-  } catch (error) {
-    console.error('Error deleting material:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// UTILITY ROUTES
-// GET: File serve route
-app.get('/file/:filename', (req, res) => {
-  const filename = req.params.filename;
-  const filePath = path.join(__dirname, 'uploads', filename);
-  
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).json({ error: 'File not found' });
-  }
-});
-
-// Database sync and server start
-async function startServer() {
-  try {
-    await sequelize.authenticate();
-    console.log('Database connection established successfully.');
-    
-    await sequelize.sync();
-    console.log('Database synchronized successfully.');
-    
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error('Unable to start server:', error);
-  }
-}
-
-
-// 🔹 GET: Fetch all employee submissions (admin view or general list)
+// Fetch all employee submissions (admin view or general list)
 app.get('/employee_details', async (req, res) => {
   try {
     const data = await Material.findAll({
@@ -1767,8 +1151,7 @@ app.get('/employee_details', async (req, res) => {
   }
 });
 
-
-// 🔹 POST: Submit material from employee (userId auto-generated)
+// Submit material from employee (userId auto-generated)
 app.post('/employee_details', upload.fields([
   { name: 'image1' }, { name: 'image2' }, { name: 'image3' },
   { name: 'video1' }, { name: 'video2' }, { name: 'video3' }
@@ -1820,13 +1203,164 @@ app.post('/employee_details', upload.fields([
   }
 });
 
-// Backend Routes for Order Management System
+// Admin sees both employees data
+app.get('/both_employees', async (req, res) => {
+  try {
+    // Fetch all materials
+    const allData = await Material.findAll({ order: [['createdAt', 'DESC']] });
 
-//order management //
-//
-//
-// ADMIN ROUTES - ORDER 
+    // Filter based on role
+    const fieldEmp = allData.filter(entry => entry.role === 'employee');
+    const officeEmp = allData.filter(entry => entry.role === 'office');
 
+    res.json({
+      success: true,
+      total: allData.length,
+      fieldEmpCount: fieldEmp.length,
+      officeEmpCount: officeEmp.length,
+      all: allData,
+      fieldEmp,
+      officeEmp
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching admin data',
+      error: err.message
+    });
+  }
+});
+
+// =================================================================
+// FEEDBACK ROUTES
+// =================================================================
+
+// Add feedback route for clients
+app.post('/api/client/feedback', async (req, res) => {
+  try {
+    const { 
+      clientId, 
+      billId, 
+      orderId,
+      rating, 
+      feedbackText, 
+      serviceQuality,
+      deliveryTime,
+      productQuality,
+      overallSatisfaction,
+      recommendations 
+    } = req.body;
+
+    // Validate required fields
+    if (!clientId || !rating || !feedbackText) {
+      return res.status(400).json({
+        success: false,
+        message: 'Client ID, rating, and feedback text are required'
+      });
+    }
+
+    // Create feedback record
+    const feedback = await Material.create({
+      userId: `FEEDBACK_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      c_id: clientId,
+      orderId: orderId || null,
+      role: 'feedback',
+      name: 'Client Feedback',
+      detail: feedbackText,
+      rating: parseInt(rating),
+      serviceQuality: serviceQuality || null,
+      deliveryTime: deliveryTime || null,
+      productQuality: productQuality || null,
+      overallSatisfaction: overallSatisfaction || null,
+      recommendations: recommendations || null,
+      billId: billId || null,
+      status: 'submitted',
+      productType: 'feedback'
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Feedback submitted successfully',
+      data: feedback
+    });
+
+  } catch (error) {
+    console.error('Error submitting feedback:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Get feedback for admin
+app.get('/api/admin/feedback', async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 50,
+      sortBy = 'createdAt',
+      sortOrder = 'DESC',
+      clientId
+    } = req.query;
+
+    let whereClause = {
+      role: 'feedback'
+    };
+
+    if (clientId) {
+      whereClause.c_id = clientId;
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: feedback } = await Material.findAndCountAll({
+      where: whereClause,
+      include: [
+        {
+          model: SignUp,
+          as: 'Client',
+          attributes: ['id', 'fullname', 'email', 'phone'],
+          required: false
+        }
+      ],
+      order: [[sortBy, sortOrder]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Feedback fetched successfully',
+      data: {
+        feedback,
+        pagination: {
+          total: count,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(count / limit),
+          hasNext: offset + feedback.length < count,
+          hasPrev: page > 1
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching feedback:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// =================================================================
+// ORDER MANAGEMENT ROUTES
+// =================================================================
+
+// Get clients
 app.get('/clients', async (req, res) => {
   try {
     const clients = await SignUp.findAll({
@@ -1857,8 +1391,7 @@ app.get('/clients', async (req, res) => {
   }
 });
 
-
-
+// Create new order
 app.post('/api/admin/orders', upload.fields([
   { name: 'image1' }, 
   { name: 'video1' }
@@ -1889,7 +1422,7 @@ app.post('/api/admin/orders', upload.fields([
       });
     }
 
-    const userId= await generateOrderId();
+    const userId = await generateOrderId();
     const totalPrice = parseFloat(unitPrice) * (parseInt(quantity) || 1);
     const finalPrice = totalPrice - totalPrice * (parseFloat(offer) / 100);
 
@@ -1912,7 +1445,7 @@ app.post('/api/admin/orders', upload.fields([
       createdBy: 'admin',
       phone: phone || null,
       c_id: c_id || null,
-      role:'admin',
+      role: 'admin',
       detail
     });
 
@@ -1931,15 +1464,7 @@ app.post('/api/admin/orders', upload.fields([
   }
 });
 
-function generateOrderId() {
-  // Generate a unique order ID using timestamp and random number
-  const timestamp = Date.now();
-  const randomNum = Math.floor(Math.random() * 1000);
-  return `ORDER_${timestamp}_${randomNum}`;
-}
-
-// Fixed backend routes for order management
-
+// Get all orders
 app.get('/api/admin/orders', async (req, res) => {
   try {
     const {
@@ -1954,8 +1479,7 @@ app.get('/api/admin/orders', async (req, res) => {
     } = req.query;
 
     const whereClause = {
-      // Add this filter to only get order data (not employee/office data)
-      role: 'admin' // or whatever role you use for orders
+      role: 'admin' // Filter to only get order data
     };
 
     // Filter by status
@@ -1970,7 +1494,6 @@ app.get('/api/admin/orders', async (req, res) => {
         { customerName: { [Op.like]: `%${search}%` } },
         { customerEmail: { [Op.like]: `%${search}%` } },
         { customerPhone: { [Op.like]: `%${search}%` } },
-        { orderId: { [Op.like]: `%${search}%` } },
         { phone: { [Op.like]: `%${search}%` } },
         { c_id: { [Op.like]: `%${search}%` } }
       ];
@@ -2018,7 +1541,7 @@ app.get('/api/admin/orders', async (req, res) => {
   }
 });
 
-// Fixed PUT route - use Material instead of Order
+// Update order
 app.put('/api/admin/orders/:id', upload.fields([
   { name: 'image1' },
   { name: 'video1' }
@@ -2046,7 +1569,6 @@ app.put('/api/admin/orders/:id', upload.fields([
       detail
     } = req.body;
 
-    // Use Material model instead of Order
     const order = await Material.findByPk(id);
     if (!order) {
       return res.status(404).json({
@@ -2055,7 +1577,6 @@ app.put('/api/admin/orders/:id', upload.fields([
       });
     }
 
-    // Fixed calculation bug - was using finalPrice instead of totalPrice
     const totalPrice = parseFloat(unitPrice || order.unitPrice) * (parseInt(quantity || order.quantity) || 1);
     const finalPrice = totalPrice - (totalPrice * (parseFloat(offer || order.offer) / 100));
 
@@ -2068,7 +1589,7 @@ app.put('/api/admin/orders/:id', upload.fields([
       unit: unit || order.unit,
       quantity: quantity || order.quantity,
       unitPrice: parseFloat(unitPrice || order.unitPrice),
-      totalPrice: finalPrice, // Fixed this line
+      totalPrice: finalPrice,
       vehicleName: vehicleName || order.vehicleName,
       vehicleNumber: vehicleNumber || order.vehicleNumber,
       pincode: pincode || order.pincode,
@@ -2098,7 +1619,7 @@ app.put('/api/admin/orders/:id', upload.fields([
   }
 });
 
-// Add DELETE route for orders
+// Delete order
 app.delete('/api/admin/orders/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -2127,133 +1648,11 @@ app.delete('/api/admin/orders/:id', async (req, res) => {
   }
 });
 
-// Alternative approach - create separate routes for different data types
-app.get('/api/admin/orders-only', async (req, res) => {
-  try {
-    const {
-      status,
-      sortBy = 'createdAt',
-      sortOrder = 'DESC',
-      page = 1,
-      limit = 50,
-      search,
-      clientId,
-      phone
-    } = req.query;
+// =================================================================
+// BILL MANAGEMENT ROUTES
+// =================================================================
 
-    const whereClause = {
-      // Only get records that are actual orders (not employee data)
-      [Op.and]: [
-        { role: 'admin' },
-        { createdBy: 'admin' },
-        // Add other conditions that identify this as an order
-        { 
-          [Op.or]: [
-            { name: { [Op.ne]: null } },
-            { unitPrice: { [Op.ne]: null } }
-          ]
-        }
-      ]
-    };
-
-    // Add your existing filters here...
-    if (status && status !== 'all') {
-      whereClause.status = status;
-    }
-
-    if (search) {
-      whereClause[Op.or] = [
-        { name: { [Op.like]: `%${search}%` } },
-        { customerName: { [Op.like]: `%${search}%` } },
-        { customerEmail: { [Op.like]: `%${search}%` } },
-        { customerPhone: { [Op.like]: `%${search}%` } },
-        { orderId: { [Op.like]: `%${search}%` } },
-        { phone: { [Op.like]: `%${search}%` } },
-        { c_id: { [Op.like]: `%${search}%` } }
-      ];
-    }
-
-    if (clientId) {
-      whereClause.c_id = clientId;
-    }
-
-    if (phone) {
-      whereClause.phone = phone;
-    }
-
-    const offset = (page - 1) * limit;
-
-    const { count, rows: orders } = await Material.findAndCountAll({
-      where: whereClause,
-      order: [[sortBy, sortOrder]],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Orders fetched successfully',
-      data: {
-        orders,
-        pagination: {
-          total: count,
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(count / limit),
-          hasNext: offset + orders.length < count,
-          hasPrev: page > 1
-        }
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching orders:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-
-//Admin sees bith employees data
-
-app.get('/both_employees', async (req, res) => {
-  try {
-    // Fetch all materials
-    const allData = await Material.findAll({ order: [['createdAt', 'DESC']] });
-
-    // Filter based on role
-    const fieldEmp = allData.filter(entry => entry.role === 'employee');
-    const officeEmp = allData.filter(entry => entry.role === 'office');
-
-    res.json({
-      success: true,
-      total: allData.length,
-      fieldEmpCount: fieldEmp.length,
-      officeEmpCount: officeEmp.length,
-      all: allData,
-      fieldEmp,
-      officeEmp
-    });
-
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching admin data',
-      error: err.message
-    });
-  }
-});
-
-
-
-
-
-
-
-
-//............................................................................................
-
+// Send bill for order
 app.post('/api/admin/orders/:orderId/send-bill', async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -2385,14 +1784,15 @@ app.get('/api/admin/bills', async (req, res) => {
     }
 
     // Search functionality
-    if (search) {
-      whereClause[Op.or] = [
-        { billNumber: { [Op.iLike]: `%${search}%` } },
-        { materialName: { [Op.iLike]: `%${search}%` } },
-        { '$Client.fullname$': { [Op.iLike]: `%${search}%` } },
-        { '$Client.email$': { [Op.iLike]: `%${search}%` } }
-      ];
-    }
+if (search) {
+  whereClause[Op.or] = [
+    { billNumber: { [Op.iLike]: `%${search}%` } },
+    { materialName: { [Op.iLike]: `%${search}%` } },
+    { '$Client.fullname$': { [Op.iLike]: `%${search}%` } },
+    { '$Client.email$': { [Op.iLike]: `%${search}%` } }
+  ];
+}
+
 
     const offset = (page - 1) * limit;
 
@@ -2719,59 +2119,6 @@ app.patch('/api/client/bill/:billId/payment', async (req, res) => {
 });
 
 // =================================================================
-// UTILITY ROUTES
-// =================================================================
-
-// GET: Dashboard statistics for bills
-app.get('/api/admin/bills/stats', async (req, res) => {
-  try {
-    const totalBills = await Bill.count();
-    const pendingBills = await Bill.count({ where: { paymentStatus: 'pending' } });
-    const successfulBills = await Bill.count({ where: { paymentStatus: 'successful' } });
-    
-    const totalRevenue = await Bill.sum('totalAmount', { 
-      where: { paymentStatus: 'successful' } 
-    });
-    
-    const pendingRevenue = await Bill.sum('totalAmount', { 
-      where: { paymentStatus: 'pending' } 
-    });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        totalBills,
-        pendingBills,
-        successfulBills,
-        totalRevenue: totalRevenue || 0,
-        pendingRevenue: pendingRevenue || 0
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching bill statistics:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-
-function generateBillNumber() {
-  const timestamp = Date.now();
-  const random = Math.floor(Math.random() * 1000);
-  return `BILL-${timestamp}-${random}`;
-}
-
-
-
-
-//..............................................................
-
-
-// =================================================================
 // PRODUCT MANAGEMENT ROUTES
 // =================================================================
 
@@ -2793,9 +2140,9 @@ app.get('/api/admin/products', async (req, res) => {
     // Search functionality
     if (search) {
       whereClause[Op.or] = [
-        { name: { [Op.iLike]: `%${search}%` } },
-        { detail: { [Op.iLike]: `%${search}%` } },
-        { unit: { [Op.iLike]: `%${search}%` } }
+        { name: { [Op.like]: `%${search}%` } },
+        { detail: { [Op.like]: `%${search}%` } },
+        { unit: { [Op.like]: `%${search}%` } }
       ];
     }
 
@@ -3071,8 +2418,8 @@ app.put('/api/admin/products/:id', upload.fields([
       unitPrice: price,
       image1: image1,
       image2: image2,
-      userId: existingProduct.userId || 1, // Keep existing userId or default to 1
-      role: existingProduct.role || 'admin', // Keep existing role or default to admin
+      userId: existingProduct.userId || 1,
+      role: existingProduct.role || 'admin',
       updatedAt: new Date()
     });
 
@@ -3175,6 +2522,46 @@ app.delete('/api/admin/products/:id', async (req, res) => {
   }
 });
 
+// =================================================================
+// STATISTICS AND UTILITY ROUTES
+// =================================================================
+
+// GET: Dashboard statistics for bills
+app.get('/api/admin/bills/stats', async (req, res) => {
+  try {
+    const totalBills = await Bill.count();
+    const pendingBills = await Bill.count({ where: { paymentStatus: 'pending' } });
+    const successfulBills = await Bill.count({ where: { paymentStatus: 'successful' } });
+    
+    const totalRevenue = await Bill.sum('totalAmount', { 
+      where: { paymentStatus: 'successful' } 
+    });
+    
+    const pendingRevenue = await Bill.sum('totalAmount', { 
+      where: { paymentStatus: 'pending' } 
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalBills,
+        pendingBills,
+        successfulBills,
+        totalRevenue: totalRevenue || 0,
+        pendingRevenue: pendingRevenue || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching bill statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
 // GET: Get product statistics
 app.get('/api/admin/products/stats', async (req, res) => {
   try {
@@ -3217,8 +2604,166 @@ app.get('/api/admin/products/stats', async (req, res) => {
   }
 });
 
-// Serve uploaded images
-app.use('/uploads', express.static('uploads'));
+// GET: Get approval statistics for admin dashboard
+app.get('/api/admin/approval-stats', async (req, res) => {
+  try {
+    const totalPending = await SignUp.count({
+      where: {
+        [Op.or]: [
+          { isApproved: false },
+          { isApproved: null }
+        ],
+        [Op.or]: [
+          { status: 'pending' },
+          { status: 'Pending' },
+          { status: 'pending_approval' }
+        ],
+        type: {
+          [Op.in]: ['employee', 'officeemp', 'sale_parchase', 'field_employee', 'office_employee', 'sale_purchase', 'sales_purchase']
+        }
+      }
+    });
+
+    const totalApproved = await SignUp.count({
+      where: {
+        isApproved: true,
+        [Op.or]: [
+          { status: 'approved' },
+          { status: 'Approved' }
+        ],
+        type: {
+          [Op.in]: ['employee', 'officeemp', 'sale_parchase', 'field_employee', 'office_employee', 'sale_purchase', 'sales_purchase']
+        }
+      }
+    });
+
+    const totalRejected = await SignUp.count({
+      where: {
+        [Op.or]: [
+          { status: 'rejected' },
+          { status: 'Rejected' }
+        ],
+        type: {
+          [Op.in]: ['employee', 'officeemp', 'sale_parchase', 'field_employee', 'office_employee', 'sale_purchase', 'sales_purchase']
+        }
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalPending,
+        totalApproved,
+        totalRejected
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching approval stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// =================================================================
+// UTILITY ROUTES
+// =================================================================
+
+// GET: File serve route
+app.get('/file/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const filePath = path.join(__dirname, 'uploads', filename);
+  
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).json({ error: 'File not found' });
+  }
+});
+
+// PUT: Update material status by ID
+app.put('/api/materials/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status is required'
+      });
+    }
+
+    const material = await Material.findByPk(id);
+    
+    if (!material) {
+      return res.status(404).json({
+        success: false,
+        message: 'Material not found'
+      });
+    }
+
+    const updatedMaterial = await material.update({ status });
+
+    res.status(200).json({
+      success: true,
+      message: 'Material status updated successfully',
+      data: updatedMaterial
+    });
+
+  } catch (error) {
+    console.error('Error updating material status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// DELETE: Delete material by ID
+app.delete('/api/materials/:id', async (req, res) => {
+  try {
+    const material = await Material.findByPk(req.params.id);
+    
+    if (!material) {
+      return res.status(404).json({
+        success: false,
+        message: 'Material not found'
+      });
+    }
+
+    // Delete associated files
+    const filesToDelete = [
+      material.image1, material.image2, material.image3,
+      material.video1, material.video2, material.video3
+    ].filter(Boolean);
+
+    filesToDelete.forEach(filename => {
+      const filePath = path.join('uploads', filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    });
+
+    await material.destroy();
+
+    res.status(200).json({
+      success: true,
+      message: 'Material deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Error deleting material:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
 
 // Error handling middleware for multer
 app.use((error, req, res, next) => {
@@ -3241,9 +2786,25 @@ app.use((error, req, res, next) => {
   next(error);
 });
 
+// =================================================================
+// DATABASE SYNC AND SERVER START
+// =================================================================
 
-//.......................................................................
-
-
+// Database sync and server start
+async function startServer() {
+  try {
+    await sequelize.authenticate();
+    console.log('Database connection established successfully.');
+    
+    await sequelize.sync();
+    console.log('Database synchronized successfully.');
+    
+    app.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Unable to start server:', error);
+  }
+}
 
 startServer();
