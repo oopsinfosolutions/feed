@@ -61,7 +61,7 @@ const OfficeEmployeeScreen = ({ navigation, route }) => {
       setLoadingDetails(true);
       console.log('🔍 Fetching office employee details...');
       
-      const response = await axios.get('http://192.168.1.42:3000/view_details', {
+      const response = await axios.get('http://192.168.1.22:3000/view_details', {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',
@@ -174,7 +174,7 @@ const OfficeEmployeeScreen = ({ navigation, route }) => {
 
       console.log('📤 Submitting office employee data:', detailsData);
 
-      const response = await axios.post('http://192.168.1.42:3000/add_details', detailsData, {
+      const response = await axios.post('http://192.168.1.22:3000/add_details', detailsData, {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',
@@ -250,7 +250,7 @@ const OfficeEmployeeScreen = ({ navigation, route }) => {
             try {
               // Note: You'll need to implement the delete endpoint on the server
               // For now, using a generic delete endpoint
-              const response = await axios.delete(`http://192.168.1.42:3000/material/${id}`, {
+              const response = await axios.delete(`http://192.168.1.22:3000/material/${id}`, {
                 timeout: 10000,
               });
               

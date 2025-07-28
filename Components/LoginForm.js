@@ -115,7 +115,7 @@ const LoginForm = ({ navigation }) => {
       
       console.log('Sending login request with:', { phone: phoneToSend, password });
       
-      const response = await axios.post('http://192.168.1.42:3000/login', {
+      const response = await axios.post('http://192.168.1.22:3000/login', {
         phone: phoneToSend,
         password,
       });

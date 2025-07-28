@@ -19,7 +19,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 // Update this to match your server URL
-const API_BASE_URL = 'http://192.168.1.42:3000';
+const API_BASE_URL = 'http://192.168.1.22:3000';
 
 const CustomerScreen = ({ navigation }) => {
   const [user, setUser] = useState(null);
