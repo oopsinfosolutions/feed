@@ -17,9 +17,10 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import ClientFeedbackModal from './ClientFeedbackModal'; // Import the feedback component
 
 // Update this to match your server URL
-const API_BASE_URL = 'http://192.168.1.42:3000';
+const API_BASE_URL = 'http://192.168.1.22:3000';
 
 const CustomerScreen = ({ navigation }) => {
   const [user, setUser] = useState(null);
@@ -28,6 +29,8 @@ const CustomerScreen = ({ navigation }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackBill, setFeedbackBill] = useState(null);
   const [paymentData, setPaymentData] = useState({
     paymentMethod: '',
     transactionId: '',
@@ -277,11 +280,34 @@ const CustomerScreen = ({ navigation }) => {
         const data = await response.json();
         console.log('Payment response:', data);
         
-        Alert.alert('Success', 'Payment marked as completed successfully!');
-        setShowPaymentModal(false);
-        setPaymentData({ paymentMethod: '', transactionId: '', paymentNotes: '' });
-        setSelectedBill(null);
-        await fetchBills(user.id);
+        Alert.alert(
+          'Success', 
+          'Payment marked as completed successfully!', 
+          [
+            {
+              text: 'Give Feedback',
+              onPress: () => {
+                setShowPaymentModal(false);
+                setPaymentData({ paymentMethod: '', transactionId: '', paymentNotes: '' });
+                
+                // Show feedback modal after successful payment
+                setTimeout(() => {
+                  setFeedbackBill(selectedBill);
+                  setShowFeedbackModal(true);
+                }, 500);
+              }
+            },
+            {
+              text: 'Close',
+              onPress: () => {
+                setShowPaymentModal(false);
+                setPaymentData({ paymentMethod: '', transactionId: '', paymentNotes: '' });
+                setSelectedBill(null);
+                fetchBills(user.id);
+              }
+            }
+          ]
+        );
       } else {
         const errorData = await response.json();
         console.error('Payment error:', errorData);
@@ -291,6 +317,21 @@ const CustomerScreen = ({ navigation }) => {
       console.error('Error updating payment:', error);
       Alert.alert('Error', 'Network error. Please try again.');
     }
+  };
+
+  const handleFeedbackSubmit = (feedbackData) => {
+    console.log('Feedback submitted:', feedbackData);
+    setFeedbackBill(null);
+    
+    // Refresh bills to update any status changes
+    if (user) {
+      fetchBills(user.id);
+    }
+  };
+
+  const showFeedbackForBill = (bill) => {
+    setFeedbackBill(bill);
+    setShowFeedbackModal(true);
   };
 
   const handleLogout = async () => {
@@ -447,8 +488,23 @@ const CustomerScreen = ({ navigation }) => {
                     <Text style={styles.billNumber}>{bill.billNumber}</Text>
                     <Text style={styles.materialName}>{bill.materialName}</Text>
                   </View>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(bill.paymentStatus) }]}>
-                    <Text style={styles.statusText}>{getStatusText(bill.paymentStatus)}</Text>
+                  <View style={styles.billHeaderRight}>
+                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(bill.paymentStatus) }]}>
+                      <Text style={styles.statusText}>{getStatusText(bill.paymentStatus)}</Text>
+                    </View>
+                    {/* Add Feedback Button for paid bills */}
+                    {bill.paymentStatus === 'successful' && (
+                      <TouchableOpacity
+                        style={styles.feedbackButton}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          showFeedbackForBill(bill);
+                        }}
+                      >
+                        <Icon name="feedback" size={16} color="#6366F1" />
+                        <Text style={styles.feedbackButtonText}>Feedback</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
                 
@@ -593,15 +649,33 @@ const CustomerScreen = ({ navigation }) => {
                   </View>
                 )}
 
-                {selectedBill.paymentStatus === 'pending' && (
-                  <TouchableOpacity
-                    style={styles.payButton}
-                    onPress={() => setShowPaymentModal(true)}
-                  >
-                    <Icon name="payment" size={20} color="#fff" />
-                    <Text style={styles.payButtonText}>Mark as Paid</Text>
-                  </TouchableOpacity>
-                )}
+                {/* Action Buttons */}
+                <View style={styles.actionButtonsContainer}>
+                  {selectedBill.paymentStatus === 'pending' && (
+                    <TouchableOpacity
+                      style={styles.payButton}
+                      onPress={() => setShowPaymentModal(true)}
+                    >
+                      <Icon name="payment" size={20} color="#fff" />
+                      <Text style={styles.payButtonText}>Mark as Paid</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {selectedBill.paymentStatus === 'successful' && (
+                    <TouchableOpacity
+                      style={styles.feedbackButtonLarge}
+                      onPress={() => {
+                        setSelectedBill(null);
+                        setTimeout(() => {
+                          showFeedbackForBill(selectedBill);
+                        }, 300);
+                      }}
+                    >
+                      <Icon name="feedback" size={20} color="#fff" />
+                      <Text style={styles.feedbackButtonLargeText}>Share Feedback</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </>
             )}
           </ScrollView>
@@ -679,6 +753,15 @@ const CustomerScreen = ({ navigation }) => {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      {/* Feedback Modal */}
+      <ClientFeedbackModal
+        visible={showFeedbackModal}
+        onClose={() => setShowFeedbackModal(false)}
+        billData={feedbackBill}
+        clientData={user}
+        onSubmitFeedback={handleFeedbackSubmit}
+      />
     </SafeAreaView>
   );
 };
@@ -868,6 +951,9 @@ const styles = StyleSheet.create({
   billInfo: {
     flex: 1
   },
+  billHeaderRight: {
+    alignItems: 'flex-end'
+  },
   billNumber: {
     fontSize: 16,
     fontWeight: 'bold',
@@ -881,12 +967,29 @@ const styles = StyleSheet.create({
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 20
+    borderRadius: 20,
+    marginBottom: 8
   },
   statusText: {
     color: '#fff',
     fontSize: 12,
     fontWeight: 'bold'
+  },
+  feedbackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#6366F1',
+  },
+  feedbackButtonText: {
+    color: '#6366F1',
+    fontSize: 10,
+    fontWeight: '600',
+    marginLeft: 4,
   },
   billDetails: {
     marginBottom: 15
@@ -982,16 +1085,33 @@ const styles = StyleSheet.create({
     color: '#666',
     lineHeight: 20
   },
+  actionButtonsContainer: {
+    marginTop: 20,
+    gap: 15
+  },
   payButton: {
     backgroundColor: '#28a745',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 15,
-    borderRadius: 10,
-    marginTop: 20
+    borderRadius: 10
   },
   payButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 10
+  },
+  feedbackButtonLarge: {
+    backgroundColor: '#6366F1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 10
+  },
+  feedbackButtonLargeText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',

@@ -15,6 +15,7 @@ import {
 import { TextInput, Button, Title } from 'react-native-paper';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 
 const { width, height } = Dimensions.get('window');
 
@@ -68,18 +69,18 @@ const LoginForm = ({ navigation }) => {
       'dealer': 'EmployeeDataScreen',
       'client': 'CustomerScreen',
       'customer': 'CustomerScreen',
-      'employee': 'EmployeeScreen',
       'field_employee': 'EmployeeScreen',
-      'field-employee': 'EmployeeScreen',
       'fieldemployee': 'EmployeeScreen',
+      'field-employee': 'EmployeeScreen',
+      'employee': 'EmployeeScreen',
       'officeemp': 'OfficeEmployeeScreen',
       'office_employee': 'OfficeEmployeeScreen',
       'office-employee': 'OfficeEmployeeScreen',
       'officeemployee': 'OfficeEmployeeScreen',
       'office': 'OfficeEmployeeScreen',
-      'sale_parchase': 'SalesPurchaseScreen',
-      'sale_purchase': 'SalesPurchaseScreen',
-      'sales_purchase': 'SalesPurchaseScreen'
+      'sale_parchase': 'OfficeEmployeeScreen',
+      'sale_purchase': 'OfficeEmployeeScreen',
+      'sales_purchase': 'OfficeEmployeeScreen'
     };
     
     const screenName = navigationMap[normalizedType];
@@ -113,17 +114,24 @@ const LoginForm = ({ navigation }) => {
       // Send phone number exactly as typed in the field
       const phoneToSend = phone.trim();
       
-      console.log('Sending login request with:', { phone: phoneToSend, password });
+      console.log('Sending login request with:', { phone: phoneToSend, password: '[HIDDEN]' });
       
-      const response = await axios.post('http://192.168.1.42:3000/login', {
+      const response = await axios.post('http://192.168.1.22:3000/login', {
         phone: phoneToSend,
         password,
+      }, {
+        timeout: 15000,
+        headers: {
+          'Content-Type': 'application/json',
+        }
       });
 
       console.log('Login response:', response.data);
   
       if (response.data.error) {
-        Alert.alert('Login Failed', response.data.error);
+        handleLoginError(response.data.error, response.data.accountStatus);
+      } else if (response.data.success === false) {
+        handleLoginError(response.data.error || 'Login failed', response.data.accountStatus);
       } else {
         // Extract user data from response
         const { type, id, fullname, isApproved, status } = response.data;
@@ -135,25 +143,87 @@ const LoginForm = ({ navigation }) => {
         console.log('Status:', status);
 
         // Define employee types that need approval
-        const employeeTypes = ['employee', 'officeemp', 'sale_parchase'];
-        const normalizedType = type.toLowerCase().trim();
+        const employeeTypes = [
+          'field_employee', 
+          'office_employee', 
+          'employee', 
+          'officeemp', 
+          'sale_parchase',
+          'sale_purchase',
+          'sales_purchase'
+        ];
+        const normalizedType = type.toLowerCase().trim().replace(/\s+/g, '_');
         
         // Only check approval status for employee types
-        if (employeeTypes.includes(normalizedType) && (!isApproved || status === 'pending')) {
-          Alert.alert(
-            'Access Denied', 
-            'Your account is pending approval from the admin. Please wait for approval before logging in.',
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  setPhone('');
-                  setPassword('');
+        if (employeeTypes.includes(normalizedType)) {
+          if (!isApproved || status === 'pending' || status === 'pending_approval') {
+            Alert.alert(
+              '⏳ Account Pending Approval', 
+              'Your account is still pending approval from the admin.\n\n' +
+              'Please wait for approval before logging in. You will be notified once your account is approved.',
+              [
+                {
+                  text: 'Contact Support',
+                  onPress: () => {
+                    // You can implement contact support functionality here
+                    Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
+                  }
+                },
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    setPhone('');
+                    setPassword('');
+                  }
                 }
-              }
-            ]
-          );
-          return;
+              ]
+            );
+            return;
+          } else if (status === 'rejected') {
+            Alert.alert(
+              '❌ Account Rejected', 
+              'Your account registration has been rejected by the admin.\n\n' +
+              'Please contact support for more information or to reapply.',
+              [
+                {
+                  text: 'Contact Support',
+                  onPress: () => {
+                    Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
+                  }
+                },
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    setPhone('');
+                    setPassword('');
+                  }
+                }
+              ]
+            );
+            return;
+          } else if (status === 'suspended') {
+            Alert.alert(
+              '🚫 Account Suspended', 
+              'Your account has been suspended.\n\n' +
+              'Please contact admin for more information.',
+              [
+                {
+                  text: 'Contact Support',
+                  onPress: () => {
+                    Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
+                  }
+                },
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    setPhone('');
+                    setPassword('');
+                  }
+                }
+              ]
+            );
+            return;
+          }
         }
   
         try {
@@ -168,15 +238,19 @@ const LoginForm = ({ navigation }) => {
             await AsyncStorage.setItem('user_name', fullname);
           }
   
-          Alert.alert('Success', 'Login successful!', [
-            {
-              text: 'OK',
-              onPress: () => {
-                // Use the improved navigation function
-                navigateToUserScreen(type, id);
+          Alert.alert(
+            '✅ Login Successful', 
+            `Welcome back, ${fullname || 'User'}!`,
+            [
+              {
+                text: 'Continue',
+                onPress: () => {
+                  // Use the improved navigation function
+                  navigateToUserScreen(type, id);
+                }
               }
-            }
-          ]);
+            ]
+          );
         } catch (storageError) {
           console.error('AsyncStorage error:', storageError);
           Alert.alert('Storage Error', 'Failed to save login data. Please try again.');
@@ -184,39 +258,105 @@ const LoginForm = ({ navigation }) => {
       }
     } catch (error) {
       console.error('Login error:', error);
-      
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-        const errorMessage = error.response.data?.error;
-        
-        if (errorMessage && errorMessage.includes('approval pending')) {
-          Alert.alert(
-            'Account Pending', 
-            'Your account is still pending approval from the admin. Please contact support if this persists.',
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  setPhone('');
-                  setPassword('');
-                }
-              }
-            ]
-          );
-        } else if (errorMessage && errorMessage.includes('Invalid credentials')) {
-          Alert.alert('Login Failed', 'Invalid phone number or password. Please try again.');
-        } else {
-          Alert.alert('Login Failed', errorMessage || 'Server error occurred');
-        }
-      } else if (error.request) {
-        console.error('Network error:', error.request);
-        Alert.alert('Network Error', 'Unable to connect to server. Please check your internet connection.');
-      } else {
-        console.error('Request error:', error.message);
-        Alert.alert('Error', 'An unexpected error occurred. Please try again.');
-      }
+      handleNetworkError(error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLoginError = (errorMessage, accountStatus) => {
+    console.error('Login error:', errorMessage, 'Status:', accountStatus);
+    
+    if (errorMessage.includes('approval pending') || errorMessage.includes('pending approval')) {
+      Alert.alert(
+        '⏳ Account Pending Approval', 
+        'Your account is still pending approval from the admin. Please contact support if this persists.',
+        [
+          {
+            text: 'Contact Support',
+            onPress: () => {
+              Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
+            }
+          },
+          {
+            text: 'OK',
+            onPress: () => {
+              setPhone('');
+              setPassword('');
+            }
+          }
+        ]
+      );
+    } else if (errorMessage.includes('Invalid credentials') || errorMessage.includes('Invalid phone') || errorMessage.includes('Invalid password')) {
+      Alert.alert(
+        '❌ Login Failed', 
+        'Invalid phone number or password. Please check your credentials and try again.',
+        [
+          {
+            text: 'Forgot Password?',
+            onPress: () => {
+              Alert.alert('Password Recovery', 'Please contact admin to reset your password at: admin@company.com');
+            }
+          },
+          {
+            text: 'OK',
+            style: 'default'
+          }
+        ]
+      );
+    } else if (errorMessage.includes('rejected')) {
+      Alert.alert(
+        '❌ Account Rejected', 
+        'Your account has been rejected. Please contact admin for more information.',
+        [
+          {
+            text: 'Contact Support',
+            onPress: () => {
+              Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
+            }
+          },
+          {
+            text: 'OK',
+            onPress: () => {
+              setPhone('');
+              setPassword('');
+            }
+          }
+        ]
+      );
+    } else {
+      Alert.alert('❌ Login Failed', errorMessage || 'An error occurred during login');
+    }
+  };
+
+  const handleNetworkError = (error) => {
+    if (error.code === 'ECONNABORTED') {
+      Alert.alert(
+        '⏱️ Connection Timeout', 
+        'The request timed out. Please check your internet connection and try again.'
+      );
+    } else if (error.response) {
+      console.error('Error response:', error.response.data);
+      const errorMessage = error.response.data?.error;
+      
+      if (error.response.status === 403) {
+        handleLoginError(errorMessage || 'Access denied', error.response.data?.accountStatus);
+      } else if (error.response.status === 401) {
+        handleLoginError(errorMessage || 'Invalid credentials');
+      } else if (error.response.status >= 500) {
+        Alert.alert('Server Error', 'Server is currently unavailable. Please try again later.');
+      } else {
+        Alert.alert('Error', errorMessage || 'Server error occurred');
+      }
+    } else if (error.request) {
+      console.error('Network error:', error.request);
+      Alert.alert(
+        '🌐 Network Error', 
+        'Unable to connect to server. Please check your internet connection and try again.'
+      );
+    } else {
+      console.error('Request error:', error.message);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
     }
   };
 
@@ -226,6 +366,40 @@ const LoginForm = ({ navigation }) => {
     if (cleaned.length <= 10) {
       setPhone(cleaned);
     }
+  };
+
+  const handleForgotPassword = () => {
+    Alert.alert(
+      'Password Recovery',
+      'To reset your password, please contact the administrator.',
+      [
+        {
+          text: 'Call Support',
+          onPress: () => {
+            // You can implement calling functionality here
+            Alert.alert('Contact Support', 'Please call: +91-9876543210');
+          }
+        },
+        {
+          text: 'Email Support',
+          onPress: () => {
+            Alert.alert('Contact Support', 'Please email: admin@company.com');
+          }
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        }
+      ]
+    );
+  };
+
+  const getPhonePreview = () => {
+    if (phone.length === 0) return '';
+    if (phone.length <= 10) {
+      return `+91 ${phone}`;
+    }
+    return phone;
   };
 
   return (
@@ -260,6 +434,7 @@ const LoginForm = ({ navigation }) => {
 
             <View style={styles.formSection}>
               <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Phone Number</Text>
                 <TextInput
                   label="Phone Number"
                   value={phone}
@@ -279,9 +454,20 @@ const LoginForm = ({ navigation }) => {
                     }
                   }}
                 />
+                {phone.length > 0 && (
+                  <Text style={styles.phonePreview}>
+                    Preview: {getPhonePreview()}
+                  </Text>
+                )}
+                {phone.length > 0 && phone.length < 10 && (
+                  <Text style={styles.errorText}>
+                    Please enter exactly 10 digits
+                  </Text>
+                )}
               </View>
 
               <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Password</Text>
                 <TextInput
                   label="Password"
                   value={password}
@@ -308,7 +494,7 @@ const LoginForm = ({ navigation }) => {
                 />
               </View>
 
-              <TouchableOpacity style={styles.forgotPassword}>
+              <TouchableOpacity style={styles.forgotPassword} onPress={handleForgotPassword}>
                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
               </TouchableOpacity>
 
@@ -320,7 +506,10 @@ const LoginForm = ({ navigation }) => {
               >
                 <View style={styles.buttonContent}>
                   {loading ? (
-                    <Text style={styles.buttonText}>Logging in...</Text>
+                    <>
+                      <Text style={styles.buttonText}>Signing in...</Text>
+                      <Text style={styles.buttonIcon}>⏳</Text>
+                    </>
                   ) : (
                     <>
                       <Text style={styles.buttonText}>Sign In</Text>
@@ -346,11 +535,34 @@ const LoginForm = ({ navigation }) => {
                 </Text>
               </TouchableOpacity>
 
-              {/* Info notice */}
+              {/* Enhanced Info Notice */}
               <View style={styles.infoContainer}>
+                <Icon name="info" size={16} color="#6366F1" />
                 <Text style={styles.infoText}>
-                  💡 Note: Employee accounts require admin approval before login access.
+                  💡 Employee accounts require admin approval. Contact support if you have login issues.
                 </Text>
+              </View>
+
+              {/* Support Contact */}
+              <View style={styles.supportContainer}>
+                <Text style={styles.supportTitle}>Need Help?</Text>
+                <View style={styles.supportButtons}>
+                  <TouchableOpacity
+                    style={styles.supportButton}
+                    onPress={() => Alert.alert('Call Support', 'Please call: +91-9876543210')}
+                  >
+                    <Icon name="phone" size={16} color="#10B981" />
+                    <Text style={styles.supportButtonText}>Call Support</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={styles.supportButton}
+                    onPress={() => Alert.alert('Email Support', 'Please email: admin@company.com')}
+                  >
+                    <Icon name="email" size={16} color="#10B981" />
+                    <Text style={styles.supportButtonText}>Email Support</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </Animated.View>
@@ -445,6 +657,12 @@ const styles = StyleSheet.create({
   inputContainer: {
     marginBottom: 20,
   },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
   input: {
     backgroundColor: '#FFFFFF',
     fontSize: 16,
@@ -456,6 +674,12 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginLeft: 4,
     fontWeight: '500',
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#EF4444',
+    marginTop: 4,
+    marginLeft: 4,
   },
   forgotPassword: {
     alignItems: 'flex-end',
@@ -540,18 +764,56 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   infoContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     backgroundColor: '#EEF2FF',
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#C7D2FE',
-    alignItems: 'center',
+    marginBottom: 16,
   },
   infoText: {
     color: '#4F46E5',
     fontSize: 12,
-    textAlign: 'center',
+    marginLeft: 8,
+    flex: 1,
+    lineHeight: 16,
     fontWeight: '500',
+  },
+  supportContainer: {
+    backgroundColor: '#F0FDF4',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  supportTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#166534',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  supportButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  supportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  supportButtonText: {
+    color: '#10B981',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
   },
   footer: {
     alignItems: 'center',

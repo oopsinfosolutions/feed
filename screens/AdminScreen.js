@@ -41,7 +41,7 @@ const AdminScreen = () => {
         ]).start();
  
         setTimeout(async () => {
-          const response = await fetch('http://192.168.1.42:3000/counts');
+          const response = await fetch('http://192.168.1.22:3000/counts');
           if (!response.ok) throw new Error('Failed to fetch counts');
           const data = await response.json();
  
