@@ -78,9 +78,10 @@ const LoginForm = ({ navigation }) => {
       'office-employee': 'OfficeEmployeeScreen',
       'officeemployee': 'OfficeEmployeeScreen',
       'office': 'OfficeEmployeeScreen',
-      'sale_parchase': 'OfficeEmployeeScreen',
-      'sale_purchase': 'OfficeEmployeeScreen',
-      'sales_purchase': 'OfficeEmployeeScreen'
+      'sale_parchase': 'SalePurchaseEmployeeScreen',
+      'sale_purchase': 'SalePurchaseEmployeeScreen',
+      'sales_purchase': 'SalePurchaseEmployeeScreen'
+
     };
     
     const screenName = navigationMap[normalizedType];
