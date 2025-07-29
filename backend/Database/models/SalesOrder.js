@@ -51,13 +51,13 @@ const SalesOrder = sequelize.define('SalesOrder', {
     defaultValue: 0
   },
   subtotal: {
-    type: DataTypes.DECIMAL(12, 2),
-    allowNull: false
-  },
-  totalAmount: {
-    type: DataTypes.DECIMAL(12, 2),
-    allowNull: false
-  },
+  type: DataTypes.DECIMAL(12, 2),
+  allowNull: true  
+},
+totalAmount: {
+  type: DataTypes.DECIMAL(12, 2),
+  allowNull: true
+},
   orderType: {
     type: DataTypes.ENUM('sale', 'purchase'),
     allowNull: false,

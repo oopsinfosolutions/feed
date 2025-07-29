@@ -8,8 +8,38 @@ const Material = require('./models/shipmentorder');
 const path = require("path");
 const fs = require('fs');
 const Bill = require('./models/bill');
+const SalesOrder = require('./models/SalesOrder');
+const Customer = require ('./models/Customer');
 require("dotenv").config();
 
+Customer.hasMany(SalesOrder, {
+  foreignKey: 'customerId',
+  as: 'orders'
+});
+SalesOrder.belongsTo(Customer, {
+  foreignKey: 'customerId',
+  as: 'customer'
+});
+
+// === SignUp ↔ Customer ===
+SignUp.hasMany(Customer, {
+  foreignKey: 'createdBy',
+  as: 'customers'
+});
+Customer.belongsTo(SignUp, {
+  foreignKey: 'createdBy',
+  as: 'user'
+});
+
+// === SignUp ↔ SalesOrder ===
+SignUp.hasMany(SalesOrder, {
+  foreignKey: 'createdBy',
+  as: 'orders'
+});
+SalesOrder.belongsTo(SignUp, {
+  foreignKey: 'createdBy',
+  as: 'user'
+});
 // Set up associations
 Bill.belongsTo(SignUp, { foreignKey: 'clientId', as: 'Client' });
 Bill.belongsTo(Material, { foreignKey: 'orderId', as: 'Order' });
@@ -2830,7 +2860,7 @@ app.get('/api/sales/customers', async (req, res) => {
       include: [
         {
           model: SignUp,
-          as: 'Creator',
+          as: 'user',
           attributes: ['id', 'fullname'],
           required: false
         }
@@ -3175,13 +3205,13 @@ app.get('/api/sales/orders', async (req, res) => {
       include: [
         {
           model: Customer,
-          as: 'Customer',
+          as: 'customer',
           attributes: ['id', 'customerName', 'phoneNumber', 'customerType'],
           required: false
         },
         {
           model: SignUp,
-          as: 'Creator',
+          as: 'user',
           attributes: ['id', 'fullname'],
           required: false
         }
@@ -3293,7 +3323,7 @@ app.post('/api/sales/orders', async (req, res) => {
       include: [
         {
           model: Customer,
-          as: 'Customer',
+          as: 'customer',
           attributes: ['id', 'customerName', 'phoneNumber'],
           required: false
         }
@@ -3402,7 +3432,7 @@ app.put('/api/sales/orders/:id', async (req, res) => {
       include: [
         {
           model: Customer,
-          as: 'Customer',
+          as: 'customer',
           attributes: ['id', 'customerName', 'phoneNumber'],
           required: false
         }
