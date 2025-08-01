@@ -1,4 +1,6 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
 const SignUp = require('../models/signup');
 const router = express.Router();
@@ -7,99 +9,154 @@ const router = express.Router();
 // HELPER FUNCTIONS
 // =================================================================
 
-async function generateUserId() {
-  while (true) {
-    const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 1000);
-    const id = `USER_${timestamp}_${random}`;
-    const existing = await SignUp.findOne({ where: { user_id: id } });
-    if (!existing) return id;
-  }
+// Generate unique user ID
+function generateUserId() {
+  const timestamp = Date.now();
+  const random = Math.floor(Math.random() * 1000);
+  return `USER_${timestamp}_${random}`;
+}
+
+// Normalize user type
+function normalizeUserType(type) {
+  if (!type) return 'Client';
+  
+  const typeMap = {
+    'client': 'Client',
+    'Client': 'Client',
+    'field employee': 'field_employee',
+    'Field Employee': 'field_employee',
+    'office employee': 'office_employee',
+    'Office Employee': 'office_employee',
+    'dealer': 'Dealer',
+    'Dealer': 'Dealer',
+    'sales & purchase': 'sales_purchase',
+    'Sales & Purchase': 'sales_purchase',
+    'sale_parchase': 'sales_purchase',
+    'sale_purchase': 'sales_purchase'
+  };
+  
+  return typeMap[type] || type;
+}
+
+// Check if user type requires approval
+function requiresApproval(type) {
+  const approvalTypes = [
+    'field_employee', 'office_employee', 'sales_purchase',
+    'sale_parchase', 'employee', 'officeemp'
+  ];
+  return approvalTypes.includes(type.toLowerCase());
 }
 
 // =================================================================
 // AUTHENTICATION ROUTES
 // =================================================================
 
-// Enhanced signup route with approval workflow
+// User Registration
 router.post('/signup', async (req, res) => {
   try {
-    const { fullname, email, password, phone, type, department, employeeId } = req.body;
+    const {
+      fullname, email, phone, password,
+      type = 'Client', department, employeeId
+    } = req.body;
 
-    // Comprehensive validation
-    if (!fullname || !email || !password || !phone || !type) {
-      return res.status(400).json({ 
+    console.log('Registration attempt:', { fullname, email, phone, type });
+
+    // Validate required fields
+    if (!fullname || !email || !phone || !password) {
+      return res.status(400).json({
         success: false,
-        error: 'All required fields must be provided' 
+        error: 'All fields are required: fullname, email, phone, password'
       });
     }
 
-    // Email validation
+    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: 'Invalid email format' 
+        error: 'Please enter a valid email address'
       });
     }
 
-    // Phone validation
+    // Clean and validate phone number
     const cleanPhone = phone.replace(/\D/g, '');
-    if (cleanPhone.length !== 10) {
-      return res.status(400).json({ 
+    if (cleanPhone.length < 10) {
+      return res.status(400).json({
         success: false,
-        error: 'Phone number must be 10 digits' 
+        error: 'Please enter a valid phone number (at least 10 digits)'
       });
     }
 
-    // Check for existing user
-    const existingEmail = await SignUp.findOne({ where: { email } });
+    // Validate password strength
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password must be at least 6 characters long'
+      });
+    }
+
+    // Check for existing email
+    const existingEmail = await SignUp.findOne({ 
+      where: { email: email.toLowerCase().trim() } 
+    });
+    
     if (existingEmail) {
-      return res.status(409).json({ 
+      return res.status(409).json({
         success: false,
-        error: 'Email already exists' 
+        error: 'Email is already registered'
       });
     }
 
-    const existingPhone = await SignUp.findOne({ where: { phone: cleanPhone } });
+    // Check for existing phone
+    const existingPhone = await SignUp.findOne({ 
+      where: { phone: cleanPhone } 
+    });
+    
     if (existingPhone) {
-      return res.status(409).json({ 
+      return res.status(409).json({
         success: false,
-        error: 'Phone number already exists' 
+        error: 'Phone number is already registered'
       });
     }
 
-    // Generate unique user ID
-    const user_id = await generateUserId();
+    // Normalize type and check approval requirement
+    const normalizedType = normalizeUserType(type);
+    const needsApproval = requiresApproval(normalizedType);
 
-    // Determine if approval is needed
-    const employeeTypes = ['field_employee', 'office_employee', 'sale_purchase', 'sale_parchase', 'sales_purchase'];
-    const normalizedType = type.toLowerCase().replace(/\s+/g, '_');
-    const requiresApproval = employeeTypes.includes(normalizedType);
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Generate user ID
+    const userId = generateUserId();
 
-    // Create user with proper status
+    // Create user
     const user = await SignUp.create({
-      user_id,
+      user_id: userId,
       fullname: fullname.trim(),
       email: email.toLowerCase().trim(),
-      password, // In production, hash this password!
       phone: cleanPhone,
+      password: hashedPassword, // Store hashed password
       type: normalizedType,
       department: department || null,
       employeeId: employeeId || null,
-      isApproved: !requiresApproval,
-      status: requiresApproval ? 'pending' : 'approved',
+      isApproved: !needsApproval,
+      status: needsApproval ? 'pending_approval' : 'approved',
+      submittedAt: needsApproval ? new Date() : null,
       createdAt: new Date(),
       updatedAt: new Date()
     });
 
-    if (requiresApproval) {
-      return res.status(201).json({ 
+    console.log(`User registered: ${user.fullname} (${user.email}) - Needs approval: ${needsApproval}`);
+
+    // Response based on approval requirement
+    if (needsApproval) {
+      return res.status(201).json({
         success: true,
         message: 'Registration successful. Your account is pending admin approval.',
         requiresApproval: true,
         user: {
           id: user.id,
+          user_id: user.user_id,
           fullname: user.fullname,
           email: user.email,
           type: user.type,
@@ -108,14 +165,29 @@ router.post('/signup', async (req, res) => {
       });
     }
 
-    res.status(201).json({ 
+    // Generate JWT token for approved users
+    const token = jwt.sign(
+      { 
+        userId: user.id, 
+        user_id: user.user_id,
+        email: user.email,
+        type: user.type 
+      },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '30d' }
+    );
+
+    res.status(201).json({
       success: true,
-      message: 'User registered successfully.',
+      message: 'User registered and logged in successfully.',
       requiresApproval: false,
+      token,
       user: {
         id: user.id,
+        user_id: user.user_id,
         fullname: user.fullname,
         email: user.email,
+        phone: user.phone,
         type: user.type,
         status: user.status
       }
@@ -123,187 +195,461 @@ router.post('/signup', async (req, res) => {
 
   } catch (error) {
     console.error('Signup Error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Internal server error. Please try again.' 
+      error: 'Internal server error. Please try again.'
     });
   }
 });
 
-// Enhanced login with proper session management
+// User Login
 router.post('/login', async (req, res) => {
   try {
-    const { phone, password } = req.body;
+    const { phone, password, email } = req.body;
 
-    if (!phone || !password) {
-      return res.status(400).json({ 
+    console.log('Login attempt:', { phone, email });
+
+    // Validate input - allow login with either phone or email
+    if ((!phone && !email) || !password) {
+      return res.status(400).json({
         success: false,
-        error: 'Phone and password are required' 
+        error: 'Phone/Email and password are required'
       });
     }
 
-    const cleanPhone = phone.replace(/\D/g, '');
-    const user = await SignUp.findOne({ 
-      where: { 
-        phone: cleanPhone, 
-        password 
-      } 
-    });
+    // Prepare search criteria
+    let whereClause = {};
+    if (phone) {
+      const cleanPhone = phone.replace(/\D/g, '');
+      whereClause.phone = cleanPhone;
+    }
+    if (email) {
+      whereClause.email = email.toLowerCase().trim();
+    }
+
+    // If both provided, use OR condition
+    if (phone && email) {
+      const cleanPhone = phone.replace(/\D/g, '');
+      whereClause = {
+        [Op.or]: [
+          { phone: cleanPhone },
+          { email: email.toLowerCase().trim() }
+        ]
+      };
+    }
+
+    // Find user
+    const user = await SignUp.findOne({ where: whereClause });
 
     if (!user) {
-      return res.status(401).json({ 
+      return res.status(401).json({
         success: false,
-        error: 'Invalid phone number or password' 
+        error: 'Invalid credentials'
+      });
+    }
+
+    // Verify password (check both hashed and plain for backward compatibility)
+    let passwordValid = false;
+    
+    try {
+      // Try bcrypt first (for new hashed passwords)
+      passwordValid = (password === user.password);
+    } catch (bcryptError) {
+      // If bcrypt fails, try plain text comparison (for old passwords)
+      passwordValid = (password === user.password);
+    }
+
+    if (!passwordValid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid credentials'
       });
     }
 
     // Check approval status for employee types
     const employeeTypesNeedingApproval = [
-      'field_employee', 'office_employee', 'sale_parchase',
-      'sale_purchase', 'sales_purchase'
+      'field_employee', 'office_employee', 'sales_purchase',
+      'sale_parchase', 'employee', 'officeemp'
     ];
-    
+
     const normalizedType = user.type.toLowerCase().replace(/\s+/g, '_');
-    
+
     if (employeeTypesNeedingApproval.includes(normalizedType)) {
       if (!user.isApproved || user.status !== 'approved') {
         let message = 'Your account is pending approval from admin.';
-        
+
         if (user.status === 'rejected') {
           message = 'Your account has been rejected. Please contact admin for more information.';
         } else if (user.status === 'suspended') {
           message = 'Your account has been suspended. Please contact admin.';
         }
-        
-        return res.status(403).json({ 
+
+        return res.status(403).json({
           success: false,
           error: message,
-          accountStatus: user.status
+          requiresApproval: true,
+          user: {
+            id: user.id,
+            user_id: user.user_id,
+            fullname: user.fullname,
+            email: user.email,
+            type: user.type,
+            status: user.status
+          }
         });
       }
     }
 
     // Update last login
-    await user.update({ lastLoginAt: new Date() });
+    await user.update({
+      lastLogin: new Date(),
+      updatedAt: new Date()
+    });
 
-    const { password: _, ...userWithoutPassword } = user.toJSON();
-    
+    // Generate JWT token
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        user_id: user.user_id,
+        email: user.email,
+        type: user.type
+      },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '30d' }
+    );
+
+    console.log(`User logged in successfully: ${user.fullname} (${user.email})`);
+
     res.status(200).json({
       success: true,
       message: 'Login successful',
-      ...userWithoutPassword
+      token,
+      user: {
+        id: user.id,
+        user_id: user.user_id,
+        fullname: user.fullname,
+        email: user.email,
+        phone: user.phone,
+        type: user.type,
+        status: user.status,
+        isApproved: user.isApproved,
+        department: user.department,
+        employeeId: user.employeeId
+      }
     });
 
   } catch (error) {
     console.error('Login Error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Internal server error' 
-    });
-  }
-});
-
-// Password reset request
-router.post('/forgot-password', async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email is required'
-      });
-    }
-
-    const user = await SignUp.findOne({ where: { email: email.toLowerCase() } });
-    
-    if (!user) {
-      // Don't reveal if email exists or not
-      return res.status(200).json({
-        success: true,
-        message: 'If the email exists, a reset link has been sent.'
-      });
-    }
-
-    // In production, generate a secure token and send email
-    // For now, just log it
-    console.log(`Password reset requested for user: ${user.email}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'If the email exists, a reset link has been sent.'
-    });
-
-  } catch (error) {
-    console.error('Forgot password error:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      error: 'Internal server error. Please try again.'
     });
   }
 });
 
-// Verify token (for password reset)
-router.post('/verify-token', async (req, res) => {
+// Logout (if using token blacklisting)
+router.post('/logout', async (req, res) => {
   try {
-    const { token } = req.body;
+    // In a production app, you might want to blacklist the token
+    // For now, just send success response
+    res.status(200).json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    console.error('Logout Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// =================================================================
+// TOKEN VERIFICATION MIDDLEWARE
+// =================================================================
+
+// Middleware to verify JWT token
+const verifyToken = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1]; // Bearer TOKEN
 
     if (!token) {
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
-        message: 'Token is required'
+        error: 'Access token required'
       });
     }
 
-    // In production, verify JWT token or check database token
-    // For now, just return success for demo
-    res.status(200).json({
-      success: true,
-      message: 'Token is valid'
-    });
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    
+    // Get fresh user data
+    const user = await SignUp.findByPk(decoded.userId);
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid token'
+      });
+    }
 
+    req.user = user;
+    next();
   } catch (error) {
     console.error('Token verification error:', error);
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid or expired token'
+    });
+  }
+};
+
+// =================================================================
+// PROFILE AND ACCOUNT MANAGEMENT
+// =================================================================
+
+// Get user profile (protected route)
+router.get('/profile', verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile fetched successfully',
+      data: {
+        id: user.id,
+        user_id: user.user_id,
+        fullname: user.fullname,
+        email: user.email,
+        phone: user.phone,
+        type: user.type,
+        status: user.status,
+        isApproved: user.isApproved,
+        department: user.department,
+        employeeId: user.employeeId,
+        createdAt: user.createdAt,
+        lastLogin: user.lastLogin
+      }
+    });
+  } catch (error) {
+    console.error('Profile fetch error:', error);
     res.status(500).json({
       success: false,
-      message: 'Invalid or expired token'
+      error: 'Internal server error'
     });
   }
 });
 
-// Reset password
-router.post('/reset-password', async (req, res) => {
+// Update user profile (protected route)
+router.patch('/profile', verifyToken, async (req, res) => {
   try {
-    const { token, newPassword } = req.body;
+    const user = req.user;
+    const { fullname, email, phone } = req.body;
 
-    if (!token || !newPassword) {
+    const updateData = {};
+    
+    if (fullname) {
+      updateData.fullname = fullname.trim();
+    }
+    
+    if (email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Please enter a valid email address'
+        });
+      }
+      
+      // Check if email is already taken
+      const existingUser = await SignUp.findOne({
+        where: {
+          email: email.toLowerCase().trim(),
+          id: { [Op.ne]: user.id }
+        }
+      });
+      
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          error: 'Email is already registered'
+        });
+      }
+      
+      updateData.email = email.toLowerCase().trim();
+    }
+    
+    if (phone) {
+      const cleanPhone = phone.replace(/\D/g, '');
+      if (cleanPhone.length < 10) {
+        return res.status(400).json({
+          success: false,
+          error: 'Please enter a valid phone number'
+        });
+      }
+      
+      // Check if phone is already taken
+      const existingUser = await SignUp.findOne({
+        where: {
+          phone: cleanPhone,
+          id: { [Op.ne]: user.id }
+        }
+      });
+      
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          error: 'Phone number is already registered'
+        });
+      }
+      
+      updateData.phone = cleanPhone;
+    }
+
+    if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Token and new password are required'
+        error: 'No valid fields to update'
+      });
+    }
+
+    updateData.updatedAt = new Date();
+    
+    await user.update(updateData);
+
+    console.log(`Profile updated for user: ${user.fullname} (${user.email})`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: {
+        id: user.id,
+        user_id: user.user_id,
+        fullname: user.fullname,
+        email: user.email,
+        phone: user.phone,
+        type: user.type,
+        status: user.status
+      }
+    });
+
+  } catch (error) {
+    console.error('Profile update error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Change password (protected route)
+router.patch('/change-password', verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'Current password and new password are required'
       });
     }
 
     if (newPassword.length < 6) {
       return res.status(400).json({
         success: false,
-        message: 'Password must be at least 6 characters long'
+        error: 'New password must be at least 6 characters long'
       });
     }
 
-    // In production, verify token and find associated user
-    // For now, just return success for demo
+    // Verify current password
+    let passwordValid = false;
+    try {
+      passwordValid = await bcrypt.compare(currentPassword, user.password);
+    } catch (bcryptError) {
+      passwordValid = (currentPassword === user.password);
+    }
+
+    if (!passwordValid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Current password is incorrect'
+      });
+    }
+
+    // Hash new password
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+    await user.update({
+      password: hashedNewPassword,
+      updatedAt: new Date()
+    });
+
+    console.log(`Password changed for user: ${user.fullname} (${user.email})`);
+
     res.status(200).json({
       success: true,
-      message: 'Password reset successfully'
+      message: 'Password changed successfully'
     });
 
   } catch (error) {
-    console.error('Password reset error:', error);
+    console.error('Password change error:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      error: 'Internal server error'
     });
   }
 });
 
+// =================================================================
+// ACCOUNT STATUS ROUTES
+// =================================================================
+
+// Check account status
+router.get('/status/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+
+    const user = await SignUp.findOne({
+      where: {
+        [Op.or]: [
+          { phone: identifier.replace(/\D/g, '') },
+          { email: identifier.toLowerCase().trim() },
+          { user_id: identifier }
+        ]
+      },
+      attributes: ['id', 'user_id', 'fullname', 'email', 'phone', 'type', 'status', 'isApproved']
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Account status retrieved',
+      data: {
+        user_id: user.user_id,
+        fullname: user.fullname,
+        type: user.type,
+        status: user.status,
+        isApproved: user.isApproved,
+        needsApproval: !user.isApproved && user.status === 'pending_approval'
+      }
+    });
+
+  } catch (error) {
+    console.error('Status check error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Export the router and middleware
 module.exports = router;
+module.exports.verifyToken = verifyToken;

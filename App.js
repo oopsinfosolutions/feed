@@ -14,10 +14,10 @@ import Users from './screens/Admin/Users';
 import Product from './screens/Admin/Product';
 import CreateOrder from './screens/Admin/CreateOrder';
 import EmployeeData from './screens/Admin/EmployeeData';
+import ClientFeedbackScreen from './screens/Admin/ClientFeedbackScreen';
 import EmployeeScreen from './screens/EmployeeScreen';
 import OfficeEmployeeScreen from './screens/OfficeEmployeeScreen';
 import SalePurchaseEmployeeScreen from './screens/SalePurchaseEmployeeScreen';
-
 
 const Stack = createStackNavigator();
 
@@ -34,11 +34,12 @@ export default function App() {
           <Stack.Screen name="Navbar" component={Navbar} />
           <Stack.Screen name="AdminScreen" component={AdminScreen} />
           <Stack.Screen name="OfficeEmployeeScreen" component={OfficeEmployeeScreen} />
-           <Stack.Screen name="SalePurchaseEmployeeScreen" component={SalePurchaseEmployeeScreen} />
+          <Stack.Screen name="SalePurchaseEmployeeScreen" component={SalePurchaseEmployeeScreen} />
           <Stack.Screen name="Users" component={Users} />
           <Stack.Screen name="Product" component={Product} />
           <Stack.Screen name="CreateOrder" component={CreateOrder} />
           <Stack.Screen name="EmployeeData" component={EmployeeData} />
+          <Stack.Screen name="ClientFeedback" component={ClientFeedbackScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </PaperProvider>

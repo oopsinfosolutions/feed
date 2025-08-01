@@ -95,7 +95,7 @@ const ClientFeedbackModal = ({
 
       console.log('Submitting feedback:', feedbackData);
 
-      const response = await fetch('http://192.168.1.42:3000/api/client/feedback', {
+      const response = await fetch('http://192.168.1.22:3000/api/client/feedback', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

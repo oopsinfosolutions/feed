@@ -117,7 +117,7 @@ const LoginForm = ({ navigation }) => {
       
       console.log('Sending login request with:', { phone: phoneToSend, password: '[HIDDEN]' });
       
-      const response = await axios.post('http://192.168.1.22:3000/login', {
+      const response = await axios.post('http://192.168.1.22:3000/api/auth/login', {
         phone: phoneToSend,
         password,
       }, {
@@ -135,7 +135,8 @@ const LoginForm = ({ navigation }) => {
         handleLoginError(response.data.error || 'Login failed', response.data.accountStatus);
       } else {
         // Extract user data from response
-        const { type, id, fullname, isApproved, status } = response.data;
+        const { id, fullname, phone, type, isApproved, status } = response.data.user;
+
         
         console.log('User type received from server:', type);
         console.log('User ID received:', id);
