@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 
 // Replace this with your actual server URL
-const API_BASE_URL = 'http://192.168.1.22:3000';
+import { API_CONFIG, API_ENDPOINTS } from '../../config/ApiConfig';
 
 const CreateOrder = ({ userRole, userId, userInfo }) => {
   const [showForm, setShowForm] = useState(true);
@@ -70,7 +70,7 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
       
-      const response = await fetch(`${API_BASE_URL}/clients`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/orders/clients`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -109,7 +109,7 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
     try {
       setLoading(true);
       
-      let url = `${API_BASE_URL}/api/admin/orders`;
+      let url = `${API_CONFIG.BASE_URL}/api/admin/orders`;
       const params = new URLSearchParams();
       
       // Add filters based on selection
@@ -263,7 +263,7 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
 
       console.log('Sending bill with data:', billData);
       
-      const response = await fetch(`${API_BASE_URL}/api/admin/orders/${orderId}/send-bill`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/orders/${orderId}/send-bill`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -308,11 +308,11 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
       
       if (editingOrder) {
         // Editing existing order
-        url = `${API_BASE_URL}/api/admin/orders/${editingOrder.id}`;
+        url = `${API_CONFIG.BASE_URL}/api/admin/orders/${editingOrder.id}`;
         method = 'PUT';
       } else {
         // Creating regular order (always create first, then send bill if needed)
-        url = `${API_BASE_URL}/api/admin/orders`;
+        url = `${API_CONFIG.BASE_URL}/api/admin/orders`;
         method = 'POST';
       }
       
@@ -428,7 +428,7 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
                 createdBy: userInfo?.id || userId
               };
 
-              const response = await fetch(`${API_BASE_URL}/api/admin/orders/${order.id}/send-bill`, {
+              const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/orders/${order.id}/send-bill`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -505,7 +505,7 @@ const CreateOrder = ({ userRole, userId, userInfo }) => {
   const deleteOrder = async (orderId) => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/api/admin/orders/${orderId}`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/orders/${orderId}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',

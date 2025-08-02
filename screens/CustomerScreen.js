@@ -20,7 +20,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import ClientFeedbackModal from './ClientFeedbackModal'; // Import the feedback component
 
 // Update this to match your server URL
-const API_BASE_URL = 'http://192.168.1.22:3000';
+import { API_CONFIG, API_ENDPOINTS } from '../config/ApiConfig';
 
 const CustomerScreen = ({ navigation }) => {
   const [user, setUser] = useState(null);
@@ -130,7 +130,7 @@ const CustomerScreen = ({ navigation }) => {
       console.log(`Fetching bills for client ID: ${clientId}`);
       console.log(`Using dummy token for API calls`);
       
-      const response = await fetch(`${API_BASE_URL}/api/client/bills/${clientId}`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/client/bills/${clientId}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${dummyToken}`,
@@ -217,7 +217,7 @@ const CustomerScreen = ({ navigation }) => {
       console.log(`Fetching details for bill ID: ${bill.id}`);
       
       const response = await fetch(
-        `${API_BASE_URL}/api/client/bill/${bill.id}?clientId=${user.id}`,
+        `${API_CONFIG.BASE_URL}/api/client/bill/${bill.id}?clientId=${user.id}`,
         {
           method: 'GET',
           headers: {
@@ -260,7 +260,7 @@ const CustomerScreen = ({ navigation }) => {
       console.log('Submitting payment for bill:', selectedBill.id);
       
       const response = await fetch(
-        `${API_BASE_URL}/api/client/bill/${selectedBill.id}/payment`,
+        `${API_CONFIG.BASE_URL}/api/client/bill/${selectedBill.id}/payment`,
         {
           method: 'PATCH',
           headers: {

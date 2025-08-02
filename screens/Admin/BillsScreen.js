@@ -15,7 +15,7 @@ import {
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation } from '@react-navigation/native';
 
-const API_BASE_URL = 'http://192.168.1.22:3000';
+import { API_CONFIG, API_ENDPOINTS } from '../config/ApiConfig';
 
 const BillsScreen = () => {
   const navigation = useNavigation();
@@ -40,7 +40,7 @@ const BillsScreen = () => {
   const fetchBills = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/api/admin/bills`);
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/bills`);
       
       if (response.ok) {
         const data = await response.json();

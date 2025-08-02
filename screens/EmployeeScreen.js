@@ -102,7 +102,7 @@ const EmployeeScreen = () => {
         setLoadingEmployees(true);
       }
 
-      const response = await axios.get('http://192.168.1.22:3000/employee_details');
+      const response = await axios.get('http://192.168.29.161:3000/employee_details');
       
       if (response.data.success) {
         setEmployeeList(response.data.data);
@@ -300,7 +300,7 @@ const EmployeeScreen = () => {
 
       // Submit to server
       const response = await axios.post(
-        'http://192.168.1.22:3000/employee_details',
+        'http://192.168.29.161:3000/employee_details',
         formData,
         {
           headers: {

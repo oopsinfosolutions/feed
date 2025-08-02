@@ -35,7 +35,7 @@ const Product = () => {
   });
 
   // Your backend URL
-  const BASE_URL = 'http://192.168.1.22:3000';
+  const BASE_URL = 'http://192.168.29.161:3000';
 
   useEffect(() => {
     fetchProducts();

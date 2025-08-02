@@ -18,6 +18,8 @@ import ClientFeedbackScreen from './screens/Admin/ClientFeedbackScreen';
 import EmployeeScreen from './screens/EmployeeScreen';
 import OfficeEmployeeScreen from './screens/OfficeEmployeeScreen';
 import SalePurchaseEmployeeScreen from './screens/SalePurchaseEmployeeScreen';
+import Bills from './screens/Admin/BillsScreen';
+import BillsScreen from './screens/Admin/BillsScreen';
 
 const Stack = createStackNavigator();
 
@@ -40,6 +42,7 @@ export default function App() {
           <Stack.Screen name="CreateOrder" component={CreateOrder} />
           <Stack.Screen name="EmployeeData" component={EmployeeData} />
           <Stack.Screen name="ClientFeedback" component={ClientFeedbackScreen} />
+          <Stack.Screen name="Bills" component={BillsScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </PaperProvider>

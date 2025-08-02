@@ -72,7 +72,7 @@ const OfficeEmployeeScreen = ({ navigation, route }) => {
       setLoadingDetails(true);
       console.log('🔍 Fetching office employee details...');
       
-      const response = await axios.get('http://192.168.1.22:3000/view_details', {
+      const response = await axios.get('http://192.168.29.161:3000/view_details', {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',
@@ -180,7 +180,7 @@ const OfficeEmployeeScreen = ({ navigation, route }) => {
 
       console.log('📤 Submitting office employee data:', detailsData);
 
-      const response = await axios.post('http://192.168.1.22:3000/add_details', detailsData, {
+      const response = await axios.post('http://192.168.29.161:3000/add_details', detailsData, {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',
@@ -295,7 +295,7 @@ const OfficeEmployeeScreen = ({ navigation, route }) => {
       console.log('📤 Updating request:', { id: editingItem.id, ...updateData });
 
       const response = await axios.put(
-        `http://192.168.1.22:3000/update_details/${editingItem.id}`, 
+        `http://192.168.29.161:3000/update_details/${editingItem.id}`, 
         updateData,
         {
           timeout: 15000,
@@ -359,7 +359,7 @@ const OfficeEmployeeScreen = ({ navigation, route }) => {
               setLoadingDetails(true);
 
               const response = await axios.delete(
-                `http://192.168.1.22:3000/delete_details/${item.id}`,
+                `http://192.168.29.161:3000/delete_details/${item.id}`,
                 {
                   timeout: 15000,
                   headers: {

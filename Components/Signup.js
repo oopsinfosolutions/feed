@@ -160,7 +160,7 @@ const Signup = ({ navigation }) => {
 
       console.log('Submitting user data:', { ...userData, password: '[HIDDEN]' });
 
-      const response = await axios.post('http://192.168.1.22:3000/signup', userData, {
+      const response = await axios.post('http://192.168.29.161:3000/signup', userData, {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',

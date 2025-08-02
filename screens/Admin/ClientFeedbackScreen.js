@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
+  import { API_CONFIG, API_ENDPOINTS } from '../config/ApiConfig';
 
 const ClientFeedbackScreen = () => {
   const navigation = useNavigation();
@@ -30,7 +31,6 @@ const ClientFeedbackScreen = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [ratingFilter, setRatingFilter] = useState('all');
 
-  const API_BASE_URL = 'http://192.168.1.22:3000';
 
   useEffect(() => {
     fetchFeedback();
@@ -44,7 +44,7 @@ const ClientFeedbackScreen = () => {
        const fetchFeedback = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/api/admin/feedback`);
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/feedback`);
       
       if (response.ok) {
         const data = await response.json();
@@ -114,7 +114,7 @@ const ClientFeedbackScreen = () => {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/feedback/respond/${selectedFeedback.id}`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/feedback/respond/${selectedFeedback.id}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -142,7 +142,7 @@ const ClientFeedbackScreen = () => {
 
   const updateFeedbackStatus = async (feedbackId, newStatus) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/feedback/status/${feedbackId}`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/feedback/status/${feedbackId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

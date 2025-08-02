@@ -15,7 +15,7 @@ import {
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation } from '@react-navigation/native';
 
-const API_BASE_URL = 'http://192.168.1.22:3000';
+import { API_CONFIG, API_ENDPOINTS } from '../config/ApiConfig';
 
 const OrdersScreen = () => {
   const navigation = useNavigation();
@@ -52,7 +52,7 @@ const OrdersScreen = () => {
 
       for (const endpoint of endpoints) {
         try {
-          const response = await fetch(`${API_BASE_URL}${endpoint}`);
+          const response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`);
           if (response.ok) {
             const data = await response.json();
             if (data.success && data.data) {

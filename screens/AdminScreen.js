@@ -16,6 +16,7 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Provider } from 'react-native-paper';
+import { API_CONFIG, API_ENDPOINTS } from '../config/ApiConfig';
 
 const AdminScreen = () => {
   const navigation = useNavigation();
@@ -43,7 +44,7 @@ const AdminScreen = () => {
   const slideAnim = new Animated.Value(50);
 
   // API base URL
-  const API_BASE_URL = 'http://192.168.1.22:3000';
+
 
   useEffect(() => {
     initializeAnimations();
@@ -81,10 +82,10 @@ const AdminScreen = () => {
         feedbackResponse,
         activitiesResponse
       ] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/admin/approval-stats`),
-        fetch(`${API_BASE_URL}/api/admin/pending-approvals?limit=10`),
-        fetch(`${API_BASE_URL}/api/feedback/admin?limit=10`),
-        fetch(`${API_BASE_URL}/api/admin/dashboard-overview`)
+        fetch(`${API_CONFIG.BASE_URL}/api/admin/approval-stats`),
+        fetch(`${API_CONFIG.BASE_URL}/api/admin/pending-approvals?limit=10`),
+        fetch(`${API_CONFIG.BASE_URL}/api/feedback/admin?limit=10`),
+        fetch(`${API_CONFIG.BASE_URL}/api/admin/dashboard-overview`)
       ]);
 
       // Process statistics
@@ -155,7 +156,7 @@ const AdminScreen = () => {
   const handleQuickApproval = async (userId, action) => {
     try {
       const endpoint = action === 'approve' ? 'approve-user' : 'reject-user';
-      const response = await fetch(`${API_BASE_URL}/api/admin/${endpoint}/${userId}`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/${endpoint}/${userId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

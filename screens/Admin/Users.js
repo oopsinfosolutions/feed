@@ -65,7 +65,7 @@ const Users = () => {
   // Fetch users from server
   const fetchUsers = async () => {
     try {
-      const response = await axios.get('http://192.168.1.22:3000/Users');
+      const response = await axios.get('http://192.168.29.161:3000/Users');
       setUsers(response.data);
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -76,7 +76,7 @@ const Users = () => {
   // Fetch pending approval requests
   const fetchPendingApprovals = async () => {
     try {
-      const response = await axios.get('http://192.168.1.22:3000/api/admin/pending-approvals');
+      const response = await axios.get('http://192.168.29.161:3000/api/admin/pending-approvals');
       if (response.data.success) {
         setPendingApprovals(response.data.data);
       }
@@ -89,7 +89,7 @@ const Users = () => {
   // Fetch approval statistics
   const fetchApprovalStats = async () => {
     try {
-      const response = await axios.get('http://192.168.1.22:3000/api/admin/approval-stats');
+      const response = await axios.get('http://192.168.29.161:3000/api/admin/approval-stats');
       if (response.data.success) {
         setApprovalStats(response.data.data);
       }
@@ -128,7 +128,7 @@ const Users = () => {
           text: 'Approve',
           onPress: async () => {
             try {
-              const response = await axios.post(`http://192.168.1.22:3000/api/admin/approve-user/${userId}`, {
+              const response = await axios.post(`http://192.168.29.161:3000/api/admin/approve-user/${userId}`, {
                 adminId: 1, // Using integer ID instead of string
                 approvalNote: 'Approved by admin'
               });
@@ -164,7 +164,7 @@ const Users = () => {
     }
 
     try {
-      const response = await axios.post(`http://192.168.1.22:3000/api/admin/reject-user/${selectedUserId}`, {
+      const response = await axios.post(`http://192.168.29.161:3000/api/admin/reject-user/${selectedUserId}`, {
         adminId: 1, // Using integer ID instead of string
         rejectionReason: rejectionReason.trim()
       });
@@ -224,7 +224,7 @@ const Users = () => {
     };
 
     try {
-      const response = await axios.post('http://192.168.1.22:3000/signup', newUser);
+      const response = await axios.post('http://192.168.29.161:3000/signup', newUser);
       console.log('User added:', response.data);
 
       clearForm();
@@ -284,7 +284,7 @@ const Users = () => {
     }
 
     try {
-      const response = await axios.put(`http://192.168.1.22:3000/users/${editingUserId}`, updatedUser);
+      const response = await axios.put(`http://192.168.29.161:3000/users/${editingUserId}`, updatedUser);
       console.log('User updated:', response.data);
 
       clearForm();
@@ -328,7 +328,7 @@ const Users = () => {
         style: 'destructive',
         onPress: async () => {
           try {
-            await axios.delete(`http://192.168.1.22:3000/users/${userId}`);
+            await axios.delete(`http://192.168.29.161:3000/users/${userId}`);
             Alert.alert('Success', 'User deleted successfully!');
             await loadAllData();
             // Clear form if the deleted user was being edited

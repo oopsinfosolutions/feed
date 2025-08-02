@@ -122,7 +122,7 @@ const SalesPurchaseEmployeeScreen = ({ navigation, route }) => {
       setLoadingData(true);
       console.log('🔍 Fetching customers...');
       
-      const response = await axios.get('http://192.168.1.22:3000/api/sales/customers', {
+      const response = await axios.get('http://192.168.29.161:3000/api/sales/customers', {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',
@@ -151,7 +151,7 @@ const SalesPurchaseEmployeeScreen = ({ navigation, route }) => {
       setLoadingData(true);
       console.log('🔍 Fetching orders...');
       
-      const response = await axios.get('http://192.168.1.22:3000/api/sales/orders', {
+      const response = await axios.get('http://192.168.29.161:3000/api/sales/orders', {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',
@@ -302,7 +302,7 @@ const SalesPurchaseEmployeeScreen = ({ navigation, route }) => {
 
       console.log('📤 Submitting customer data:', customerPayload);
 
-      const response = await axios.post('http://192.168.1.22:3000/api/sales/customers', customerPayload, {
+      const response = await axios.post('http://192.168.29.161:3000/api/sales/customers', customerPayload, {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',
@@ -370,7 +370,7 @@ const SalesPurchaseEmployeeScreen = ({ navigation, route }) => {
 
       console.log('📤 Submitting order data:', orderPayload);
 
-      const response = await axios.post('http://192.168.1.22:3000/api/sales/orders', orderPayload, {
+      const response = await axios.post('http://192.168.29.161:3000/api/sales/orders', orderPayload, {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',
@@ -526,7 +526,7 @@ const SalesPurchaseEmployeeScreen = ({ navigation, route }) => {
       console.log(`📤 Updating ${editType}:`, { id: editingItem.id, ...updateData });
 
       const response = await axios.put(
-        `http://192.168.1.22:3000/api/sales/${endpoint}/${editingItem.id}`, 
+        `http://192.168.29.161:3000/api/sales/${endpoint}/${editingItem.id}`, 
         updateData,
         {
           timeout: 15000,
@@ -585,7 +585,7 @@ const SalesPurchaseEmployeeScreen = ({ navigation, route }) => {
 
               const endpoint = type === 'customer' ? 'customers' : 'orders';
               const response = await axios.delete(
-                `http://192.168.1.22:3000/api/sales/${endpoint}/${item.id}`,
+                `http://192.168.29.161:3000/api/sales/${endpoint}/${item.id}`,
                 {
                   timeout: 15000,
                   headers: {

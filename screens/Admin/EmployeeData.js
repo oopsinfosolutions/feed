@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Card, Text, Title, Searchbar } from 'react-native-paper';
 import axios from 'axios';
-
+ import { API_CONFIG, API_ENDPOINTS } from '../config/ApiConfig';
 const EmployeeData = () => {
   const [fieldEmployees, setFieldEmployees] = useState([]);
   const [officeEmployees, setOfficeEmployees] = useState([]);
@@ -20,7 +20,7 @@ const EmployeeData = () => {
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [employeeType, setEmployeeType] = useState('field'); // default: field
 
-  const API_BASE_URL = 'http://192.168.1.22:3000';
+ 
 
   useEffect(() => {
     loadEmployeeData();
@@ -29,7 +29,7 @@ const EmployeeData = () => {
   const loadEmployeeData = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE_URL}/both_employees`);
+      const response = await axios.get(`${API_CONFIG.BASE_URL}/both_employees`);
       if (response.data.success) {
         setFieldEmployees(response.data.fieldEmp || []);
         setOfficeEmployees(response.data.officeEmp || []);

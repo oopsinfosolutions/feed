@@ -17,6 +17,9 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
+// Import API configuration
+import { API_CONFIG, API_ENDPOINTS } from '../config/ApiConfig';
+
 const { width, height } = Dimensions.get('window');
 
 const LoginForm = ({ navigation }) => {
@@ -48,18 +51,15 @@ const LoginForm = ({ navigation }) => {
     }
     
     const cleaned = phoneNumber.replace(/\D/g, '');
-    // Accept any 10-digit number
     const phoneRegex = /^\d{10}$/;
     
     return phoneRegex.test(cleaned);
   };
 
-  // Improved navigation function with better user type handling
   const navigateToUserScreen = (userType, userId) => {
     console.log('Original user type from server:', userType);
     console.log('User ID:', userId);
     
-    // Normalize the user type for comparison
     const normalizedType = userType.toLowerCase().trim().replace(/\s+/g, '_');
     console.log('Normalized user type:', normalizedType);
     
@@ -81,7 +81,6 @@ const LoginForm = ({ navigation }) => {
       'sale_parchase': 'SalePurchaseEmployeeScreen',
       'sale_purchase': 'SalePurchaseEmployeeScreen',
       'sales_purchase': 'SalePurchaseEmployeeScreen'
-
     };
     
     const screenName = navigationMap[normalizedType];
@@ -112,19 +111,16 @@ const LoginForm = ({ navigation }) => {
     setLoading(true);
   
     try {
-      // Send phone number exactly as typed in the field
       const phoneToSend = phone.trim();
       
       console.log('Sending login request with:', { phone: phoneToSend, password: '[HIDDEN]' });
       
-      const response = await axios.post('http://192.168.1.22:3000/api/auth/login', {
+      const response = await axios.post(API_ENDPOINTS.LOGIN, {
         phone: phoneToSend,
         password,
       }, {
-        timeout: 15000,
-        headers: {
-          'Content-Type': 'application/json',
-        }
+        timeout: API_CONFIG.TIMEOUT,
+        headers: API_CONFIG.HEADERS
       });
 
       console.log('Login response:', response.data);
@@ -134,17 +130,14 @@ const LoginForm = ({ navigation }) => {
       } else if (response.data.success === false) {
         handleLoginError(response.data.error || 'Login failed', response.data.accountStatus);
       } else {
-        // Extract user data from response
         const { id, fullname, phone, type, isApproved, status } = response.data.user;
 
-        
         console.log('User type received from server:', type);
         console.log('User ID received:', id);
         console.log('Full name received:', fullname);
         console.log('Is approved:', isApproved);
         console.log('Status:', status);
 
-        // Define employee types that need approval
         const employeeTypes = [
           'field_employee', 
           'office_employee', 
@@ -156,58 +149,12 @@ const LoginForm = ({ navigation }) => {
         ];
         const normalizedType = type.toLowerCase().trim().replace(/\s+/g, '_');
         
-        // Only check approval status for employee types
         if (employeeTypes.includes(normalizedType)) {
           if (!isApproved || status === 'pending' || status === 'pending_approval') {
             Alert.alert(
               '⏳ Account Pending Approval', 
               'Your account is still pending approval from the admin.\n\n' +
               'Please wait for approval before logging in. You will be notified once your account is approved.',
-              [
-                {
-                  text: 'Contact Support',
-                  onPress: () => {
-                    // You can implement contact support functionality here
-                    Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
-                  }
-                },
-                {
-                  text: 'OK',
-                  onPress: () => {
-                    setPhone('');
-                    setPassword('');
-                  }
-                }
-              ]
-            );
-            return;
-          } else if (status === 'rejected') {
-            Alert.alert(
-              '❌ Account Rejected', 
-              'Your account registration has been rejected by the admin.\n\n' +
-              'Please contact support for more information or to reapply.',
-              [
-                {
-                  text: 'Contact Support',
-                  onPress: () => {
-                    Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
-                  }
-                },
-                {
-                  text: 'OK',
-                  onPress: () => {
-                    setPhone('');
-                    setPassword('');
-                  }
-                }
-              ]
-            );
-            return;
-          } else if (status === 'suspended') {
-            Alert.alert(
-              '🚫 Account Suspended', 
-              'Your account has been suspended.\n\n' +
-              'Please contact admin for more information.',
               [
                 {
                   text: 'Contact Support',
@@ -229,7 +176,6 @@ const LoginForm = ({ navigation }) => {
         }
   
         try {
-          // Store user data in AsyncStorage
           await AsyncStorage.setItem('user_id', String(id));
           await AsyncStorage.setItem('user_type', type);
           await AsyncStorage.setItem('user_phone', phoneToSend);
@@ -239,7 +185,7 @@ const LoginForm = ({ navigation }) => {
           if (fullname) {
             await AsyncStorage.setItem('user_name', fullname);
           }
-  
+
           Alert.alert(
             '✅ Login Successful', 
             `Welcome back, ${fullname || 'User'}!`,
@@ -247,7 +193,6 @@ const LoginForm = ({ navigation }) => {
               {
                 text: 'Continue',
                 onPress: () => {
-                  // Use the improved navigation function
                   navigateToUserScreen(type, id);
                 }
               }
@@ -363,7 +308,6 @@ const LoginForm = ({ navigation }) => {
   };
 
   const handlePhoneChange = (text) => {
-    // Allow any digits, not just numbers starting with 6-9
     const cleaned = text.replace(/\D/g, '');
     if (cleaned.length <= 10) {
       setPhone(cleaned);
@@ -376,32 +320,17 @@ const LoginForm = ({ navigation }) => {
       'To reset your password, please contact the administrator.',
       [
         {
-          text: 'Call Support',
+          text: 'Contact Admin',
           onPress: () => {
-            // You can implement calling functionality here
-            Alert.alert('Contact Support', 'Please call: +91-9876543210');
+            Alert.alert(
+              'Contact Information',
+              'Email: admin@company.com\nPhone: +91-9876543210\n\nPlease provide your registered phone number when contacting.'
+            );
           }
         },
-        {
-          text: 'Email Support',
-          onPress: () => {
-            Alert.alert('Contact Support', 'Please email: admin@company.com');
-          }
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel'
-        }
+        { text: 'OK', style: 'cancel' }
       ]
     );
-  };
-
-  const getPhonePreview = () => {
-    if (phone.length === 0) return '';
-    if (phone.length <= 10) {
-      return `+91 ${phone}`;
-    }
-    return phone;
   };
 
   return (
@@ -409,6 +338,7 @@ const LoginForm = ({ navigation }) => {
       <KeyboardAvoidingView 
         style={styles.keyboardContainer} 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         <ScrollView 
           contentContainerStyle={styles.scrollContainer}
@@ -422,81 +352,80 @@ const LoginForm = ({ navigation }) => {
               styles.loginCard,
               {
                 opacity: fadeAnim,
-                transform: [{ translateY: slideAnim }]
-              }
+                transform: [{ translateY: slideAnim }],
+              },
             ]}
           >
             <View style={styles.headerSection}>
               <View style={styles.logoContainer}>
-                <Text style={styles.logoText}>🚚</Text>
+                <Text style={styles.logoText}>🏢</Text>
               </View>
               <Title style={styles.title}>Welcome Back</Title>
-              <Text style={styles.subtitle}>Sign in to continue to your account</Text>
+              <Text style={styles.subtitle}>
+                Sign in to access your dashboard and manage your account securely
+              </Text>
+              <Text style={styles.serverInfo}>
+                Connected to: {API_CONFIG.BASE_URL}
+              </Text>
             </View>
 
             <View style={styles.formSection}>
               <View style={styles.inputContainer}>
                 <Text style={styles.inputLabel}>Phone Number</Text>
                 <TextInput
-                  label="Phone Number"
-                  value={phone}
-                  onChangeText={handlePhoneChange}
                   mode="outlined"
                   style={styles.input}
-                  outlineColor="#E0E7FF"
-                  activeOutlineColor="#6366F1"
-                  left={<TextInput.Icon icon="phone-outline" color="#6366F1" />}
-                  keyboardType="phone-pad"
-                  placeholder="Enter 10-digit mobile number"
+                  value={phone}
+                  onChangeText={handlePhoneChange}
+                  keyboardType="numeric"
                   maxLength={10}
+                  placeholder="Enter your 10-digit phone number"
+                  left={<TextInput.Icon icon="phone" />}
+                  autoCapitalize="none"
+                  autoCorrect={false}
                   theme={{
                     colors: {
                       primary: '#6366F1',
-                      placeholder: '#9CA3AF',
+                      outline: '#E2E8F0',
                     }
                   }}
                 />
-                {phone.length > 0 && (
-                  <Text style={styles.phonePreview}>
-                    Preview: {getPhonePreview()}
-                  </Text>
-                )}
-                {phone.length > 0 && phone.length < 10 && (
-                  <Text style={styles.errorText}>
-                    Please enter exactly 10 digits
-                  </Text>
-                )}
+                <Text style={styles.phonePreview}>
+                  {phone ? `+91 ${phone}` : 'Format: +91 XXXXXXXXXX'}
+                </Text>
               </View>
 
               <View style={styles.inputContainer}>
                 <Text style={styles.inputLabel}>Password</Text>
                 <TextInput
-                  label="Password"
+                  mode="outlined"
+                  style={styles.input}
                   value={password}
                   onChangeText={setPassword}
-                  mode="outlined"
                   secureTextEntry={!showPassword}
-                  style={styles.input}
-                  outlineColor="#E0E7FF"
-                  activeOutlineColor="#6366F1"
-                  left={<TextInput.Icon icon="lock-outline" color="#6366F1" />}
+                  placeholder="Enter your password"
+                  left={<TextInput.Icon icon="lock" />}
                   right={
                     <TextInput.Icon 
-                      icon={showPassword ? "eye-off" : "eye"}
-                      color="#6366F1"
+                      icon={showPassword ? 'eye-off' : 'eye'} 
                       onPress={() => setShowPassword(!showPassword)}
                     />
                   }
+                  autoCapitalize="none"
+                  autoCorrect={false}
                   theme={{
                     colors: {
                       primary: '#6366F1',
-                      placeholder: '#9CA3AF',
+                      outline: '#E2E8F0',
                     }
                   }}
                 />
               </View>
 
-              <TouchableOpacity style={styles.forgotPassword} onPress={handleForgotPassword}>
+              <TouchableOpacity 
+                style={styles.forgotPassword}
+                onPress={handleForgotPassword}
+              >
                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
               </TouchableOpacity>
 
@@ -507,17 +436,10 @@ const LoginForm = ({ navigation }) => {
                 activeOpacity={0.8}
               >
                 <View style={styles.buttonContent}>
-                  {loading ? (
-                    <>
-                      <Text style={styles.buttonText}>Signing in...</Text>
-                      <Text style={styles.buttonIcon}>⏳</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.buttonText}>Sign In</Text>
-                      <Text style={styles.buttonIcon}>→</Text>
-                    </>
-                  )}
+                  <Text style={styles.buttonText}>
+                    {loading ? 'Signing In...' : 'Sign In'}
+                  </Text>
+                  {!loading && <Text style={styles.buttonIcon}>→</Text>}
                 </View>
               </TouchableOpacity>
 
@@ -537,7 +459,6 @@ const LoginForm = ({ navigation }) => {
                 </Text>
               </TouchableOpacity>
 
-              {/* Enhanced Info Notice */}
               <View style={styles.infoContainer}>
                 <Icon name="info" size={16} color="#6366F1" />
                 <Text style={styles.infoText}>
@@ -545,7 +466,6 @@ const LoginForm = ({ navigation }) => {
                 </Text>
               </View>
 
-              {/* Support Contact */}
               <View style={styles.supportContainer}>
                 <Text style={styles.supportTitle}>Need Help?</Text>
                 <View style={styles.supportButtons}>
@@ -577,8 +497,6 @@ const LoginForm = ({ navigation }) => {
     </SafeAreaView>
   );
 };
-
-export default LoginForm;
 
 const styles = StyleSheet.create({
   container: {
@@ -652,6 +570,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
     fontWeight: '400',
+    marginBottom: 8,
+  },
+  serverInfo: {
+    fontSize: 12,
+    color: '#6366F1',
+    fontFamily: 'monospace',
+    textAlign: 'center',
   },
   formSection: {
     width: '100%',
@@ -676,12 +601,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginLeft: 4,
     fontWeight: '500',
-  },
-  errorText: {
-    fontSize: 12,
-    color: '#EF4444',
-    marginTop: 4,
-    marginLeft: 4,
   },
   forgotPassword: {
     alignItems: 'flex-end',
@@ -829,3 +748,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 });
+
+export default LoginForm;

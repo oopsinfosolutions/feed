@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
-const API_BASE_URL = 'http://192.168.1.22:3000';
+import { API_CONFIG, API_ENDPOINTS } from '../config/ApiConfig';
 
 const AdminFeedbackScreen = ({ navigation }) => {
   const [feedback, setFeedback] = useState([]);
@@ -54,7 +54,7 @@ const AdminFeedbackScreen = ({ navigation }) => {
       if (filters.rating !== 'all') params.append('rating', filters.rating);
       if (filters.search) params.append('search', filters.search);
       
-      const response = await fetch(`${API_BASE_URL}/api/admin/feedback?${params.toString()}`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/feedback?${params.toString()}`, {
         method: 'GET',
         headers: {
           'Authorization': 'Bearer dummy-token',
@@ -83,7 +83,7 @@ const AdminFeedbackScreen = ({ navigation }) => {
 
   const loadStats = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/feedback/stats`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/feedback/stats`, {
         method: 'GET',
         headers: {
           'Authorization': 'Bearer dummy-token',
@@ -127,7 +127,7 @@ const AdminFeedbackScreen = ({ navigation }) => {
 
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/admin/feedback/${selectedFeedback.id}/respond`,
+        `${API_CONFIG.BASE_URL}/api/admin/feedback/${selectedFeedback.id}/respond`,
         {
           method: 'PATCH',
           headers: {
@@ -166,7 +166,7 @@ const AdminFeedbackScreen = ({ navigation }) => {
   const updateFeedbackStatus = async (feedbackId, newStatus) => {
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/admin/feedback/${feedbackId}/status`,
+        `${API_CONFIG.BASE_URL}/api/admin/feedback/${feedbackId}/status`,
         {
           method: 'PATCH',
           headers: {
