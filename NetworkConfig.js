@@ -9,7 +9,7 @@ const NETWORK_CONFIG = {
     'http://192.168.29.161:3000',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
-    'http://192.168.1.100:3000', // Add your computer's actual IP
+    'http://192.168.29.162:3000', // Add your computer's actual IP
     // Add your production URL here
     // 'https://your-production-domain.com'
   ],

@@ -369,8 +369,17 @@ app.use('*', (req, res) => {
       'POST /api/materials/submit',
       'GET /api/orders',
       'POST /api/orders/admin',
+      'GET /api/bills',                    // ← ADD THIS
+      'GET /api/bills/client/:clientId',   // ← ADD THIS
+      'GET /api/bills/client/bill/:billId',// ← ADD THIS
+      'GET /api/client/bills/:clientId',   // ← ADD THIS
+      'GET /api/client/bill/:billId',      // ← ADD THIS
+      'POST /api/bills',                   // ← ADD THIS
+      'GET /api/products',                 // ← ADD THIS
+      'GET /api/feedback',
       'GET /api/admin/dashboard',
-      'GET /api/feedback'
+      'GET /api/sales',                    // ← ADD THIS
+      'GET /api/utils'                     // ← ADD THIS
     ]
   });
 });

@@ -122,7 +122,7 @@ const SalesPurchaseEmployeeScreen = ({ navigation, route }) => {
       setLoadingData(true);
       console.log('🔍 Fetching customers...');
       
-      const response = await axios.get('http://192.168.29.161:3000/api/sales/customers', {
+      const response = await axios.get(`${API_CONFIG.BASE_URL}/api/sales/customers`, {
         timeout: 15000,
         headers: {
           'Content-Type': 'application/json',

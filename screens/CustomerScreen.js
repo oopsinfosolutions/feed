@@ -130,7 +130,7 @@ const CustomerScreen = ({ navigation }) => {
       console.log(`Fetching bills for client ID: ${clientId}`);
       console.log(`Using dummy token for API calls`);
       
-      const response = await fetch(`${API_CONFIG.BASE_URL}/api/client/bills/${clientId}`, {
+      const response = await fetch(`${API_CONFIG.BASE_URL}/api/bills?clientId=${clientId}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${dummyToken}`,
@@ -217,7 +217,7 @@ const CustomerScreen = ({ navigation }) => {
       console.log(`Fetching details for bill ID: ${bill.id}`);
       
       const response = await fetch(
-        `${API_CONFIG.BASE_URL}/api/client/bill/${bill.id}?clientId=${user.id}`,
+        `${API_CONFIG.BASE_URL}/api/client/bills/${bill.id}`,
         {
           method: 'GET',
           headers: {

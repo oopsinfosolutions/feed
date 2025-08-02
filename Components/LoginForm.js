@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   StyleSheet, 
@@ -12,7 +12,7 @@ import {
   Animated,
   Dimensions
 } from 'react-native';
-import { TextInput, Button, Title } from 'react-native-paper';
+import { TextInput, Button, Title, ActivityIndicator } from 'react-native-paper';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -27,8 +27,13 @@ const LoginForm = ({ navigation }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [fadeAnim] = useState(new Animated.Value(0));
   const [slideAnim] = useState(new Animated.Value(50));
+
+  // Enhanced state for better UX
+  const [connectionStatus, setConnectionStatus] = useState('unknown'); // 'unknown', 'connected', 'disconnected'
+  const [phoneFormatted, setPhoneFormatted] = useState('');
 
   React.useEffect(() => {
     Animated.parallel([
@@ -43,7 +48,96 @@ const LoginForm = ({ navigation }) => {
         useNativeDriver: true,
       }),
     ]).start();
+
+    // Check for existing login and load remembered data
+    checkExistingLogin();
+    loadRememberedCredentials();
+    testInitialConnection();
   }, []);
+
+  const checkExistingLogin = async () => {
+    try {
+      const userId = await AsyncStorage.getItem('user_id');
+      const userType = await AsyncStorage.getItem('user_type');
+      
+      if (userId && userType) {
+        console.log('Found existing login data - showing options');
+        // Instead of auto-navigating, show an alert to let user choose
+        Alert.alert(
+          'Welcome Back!',
+          `You're already logged in as ${userType}. Would you like to continue or login with a different account?`,
+          [
+            {
+              text: 'Login Different',
+              onPress: async () => {
+                // Clear stored credentials to allow fresh login
+                await AsyncStorage.multiRemove([
+                  'user_id', 'user_type', 'user_name', 'user_phone', 
+                  'user_email', 'authToken', 'userStatus', 'isApproved', 'loginTime'
+                ]);
+                console.log('Cleared existing login data for fresh login');
+              },
+              style: 'default'
+            },
+            {
+              text: 'Continue',
+              onPress: () => {
+                console.log('User chose to continue with existing login');
+                navigateToUserScreen(userType, userId);
+              },
+              style: 'default'
+            }
+          ]
+        );
+      }
+    } catch (error) {
+      console.log('No existing login found');
+    }
+  };
+
+  const loadRememberedCredentials = async () => {
+    try {
+      const rememberedPhone = await AsyncStorage.getItem('rememberedPhone');
+      const isRemembered = await AsyncStorage.getItem('rememberMe');
+      
+      if (rememberedPhone && isRemembered === 'true') {
+        setPhone(rememberedPhone);
+        setRememberMe(true);
+        formatPhoneDisplay(rememberedPhone);
+      }
+    } catch (error) {
+      console.log('No remembered credentials found');
+    }
+  };
+
+  const testInitialConnection = async () => {
+    try {
+      const healthUrl = `${API_CONFIG.BASE_URL}${API_ENDPOINTS.HEALTH}`;
+      const response = await axios.get(healthUrl, { timeout: 5000 });
+      setConnectionStatus(response.status === 200 ? 'connected' : 'disconnected');
+    } catch (error) {
+      setConnectionStatus('disconnected');
+    }
+  };
+
+  const formatPhoneDisplay = (phoneNumber) => {
+    const cleaned = phoneNumber.replace(/\D/g, '');
+    if (cleaned.length === 10) {
+      const formatted = `+91 ${cleaned.slice(0, 5)} ${cleaned.slice(5)}`;
+      setPhoneFormatted(formatted);
+    } else {
+      setPhoneFormatted('');
+    }
+  };
+
+  const handlePhoneChange = (value) => {
+    // Allow only digits and limit to 10
+    const cleaned = value.replace(/\D/g, '');
+    if (cleaned.length <= 10) {
+      setPhone(cleaned);
+      formatPhoneDisplay(cleaned);
+    }
+  };
 
   const validatePhoneNumber = (phoneNumber) => {
     if (!phoneNumber || phoneNumber.trim() === '') {
@@ -54,6 +148,40 @@ const LoginForm = ({ navigation }) => {
     const phoneRegex = /^\d{10}$/;
     
     return phoneRegex.test(cleaned);
+  };
+
+  const validateForm = () => {
+    if (!validatePhoneNumber(phone)) {
+      Alert.alert(
+        'Invalid Phone Number', 
+        'Please enter a valid 10-digit phone number'
+      );
+      return false;
+    }
+
+    if (!password || password.trim().length < 3) {
+      Alert.alert(
+        'Invalid Password', 
+        'Password must be at least 3 characters long'
+      );
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleRememberMe = async (phoneNumber) => {
+    try {
+      if (rememberMe) {
+        await AsyncStorage.setItem('rememberedPhone', phoneNumber);
+        await AsyncStorage.setItem('rememberMe', 'true');
+      } else {
+        await AsyncStorage.removeItem('rememberedPhone');
+        await AsyncStorage.removeItem('rememberMe');
+      }
+    } catch (error) {
+      console.log('Error saving remember me preference:', error);
+    }
   };
 
   const navigateToUserScreen = (userType, userId) => {
@@ -80,237 +208,355 @@ const LoginForm = ({ navigation }) => {
       'office': 'OfficeEmployeeScreen',
       'sale_parchase': 'SalePurchaseEmployeeScreen',
       'sale_purchase': 'SalePurchaseEmployeeScreen',
-      'sales_purchase': 'SalePurchaseEmployeeScreen'
+      'sales_purchase': 'SalePurchaseEmployeeScreen',
+      'sales_&_purchase': 'SalePurchaseEmployeeScreen'
     };
     
     const screenName = navigationMap[normalizedType];
     
     if (screenName) {
       console.log(`Navigating to: ${screenName} with userId: ${userId}`);
-      navigation.navigate(screenName, { customerId: userId });
+      navigation.reset({
+        index: 0,
+        routes: [{ name: screenName, params: { customerId: userId } }],
+      });
     } else {
       console.log('Available navigation options:', Object.keys(navigationMap));
       Alert.alert(
         'Navigation Error', 
-        `Unknown user role: "${userType}". Please contact support.\n\nReceived type: ${userType}\nNormalized: ${normalizedType}`
+        `Unknown user role: "${userType}". Please contact administrator.`
       );
     }
   };
-  
+
   const handleLogin = async () => {
-    if (!phone || !password) {
-      Alert.alert('Validation Error', 'Please enter both phone number and password.');
-      return;
-    }
-  
-    if (!validatePhoneNumber(phone)) {
-      Alert.alert('Validation Error', 'Please enter a valid 10-digit phone number.');
-      return;
-    }
-  
-    setLoading(true);
-  
+    if (!validateForm()) return;
+
     try {
-      const phoneToSend = phone.trim();
+      setLoading(true);
+      setConnectionStatus('unknown');
       
-      console.log('Sending login request with:', { phone: phoneToSend, password: '[HIDDEN]' });
+      // FIXED: Construct the full URL correctly
+      const loginUrl = `${API_CONFIG.BASE_URL}${API_ENDPOINTS.LOGIN}`;
+      console.log('🔄 Making login request to:', loginUrl);
+      console.log('📱 Phone:', phone);
       
-      const response = await axios.post(API_ENDPOINTS.LOGIN, {
-        phone: phoneToSend,
-        password,
-      }, {
-        timeout: API_CONFIG.TIMEOUT,
-        headers: API_CONFIG.HEADERS
+      const requestData = {
+        phone: phone.trim(),
+        password: password
+      };
+
+      console.log('📤 Request data:', { ...requestData, password: '***' });
+
+      const response = await axios.post(loginUrl, requestData, {
+        timeout: 15000,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
       });
 
-      console.log('Login response:', response.data);
-  
-      if (response.data.error) {
-        handleLoginError(response.data.error, response.data.accountStatus);
-      } else if (response.data.success === false) {
-        handleLoginError(response.data.error || 'Login failed', response.data.accountStatus);
-      } else {
-        const { id, fullname, phone, type, isApproved, status } = response.data.user;
+      console.log('✅ Login response status:', response.status);
+      console.log('✅ Login response data:', response.data);
 
-        console.log('User type received from server:', type);
-        console.log('User ID received:', id);
-        console.log('Full name received:', fullname);
-        console.log('Is approved:', isApproved);
-        console.log('Status:', status);
+      setConnectionStatus('connected');
 
-        const employeeTypes = [
-          'field_employee', 
-          'office_employee', 
-          'employee', 
-          'officeemp', 
-          'sale_parchase',
-          'sale_purchase',
-          'sales_purchase'
+      if (response.data.success) {
+        const { user, token } = response.data;
+        console.log('👤 User data:', user);
+
+        // Handle remember me
+        await handleRememberMe(phone);
+
+        // Store user data exactly as your CustomerScreen expects
+        const userData = [
+          ['user_id', user.id.toString()],
+          ['user_type', user.type || 'Client'],
+          ['user_name', user.fullname || user.name || 'User'],
+          ['user_phone', user.phone || phone],
+          ['user_email', user.email || ''],
+          ['authToken', token || 'dummy-token'],
+          ['userStatus', user.status || 'active'],
+          ['isApproved', (user.isApproved !== false).toString()],
+          ['loginTime', new Date().toISOString()]
         ];
-        const normalizedType = type.toLowerCase().trim().replace(/\s+/g, '_');
-        
-        if (employeeTypes.includes(normalizedType)) {
-          if (!isApproved || status === 'pending' || status === 'pending_approval') {
-            Alert.alert(
-              '⏳ Account Pending Approval', 
-              'Your account is still pending approval from the admin.\n\n' +
-              'Please wait for approval before logging in. You will be notified once your account is approved.',
-              [
-                {
-                  text: 'Contact Support',
-                  onPress: () => {
-                    Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
-                  }
-                },
-                {
-                  text: 'OK',
-                  onPress: () => {
-                    setPhone('');
-                    setPassword('');
-                  }
-                }
-              ]
-            );
-            return;
-          }
-        }
-  
-        try {
-          await AsyncStorage.setItem('user_id', String(id));
-          await AsyncStorage.setItem('user_type', type);
-          await AsyncStorage.setItem('user_phone', phoneToSend);
-          await AsyncStorage.setItem('user_approved', String(isApproved));
-          await AsyncStorage.setItem('user_status', status || 'approved');
-          
-          if (fullname) {
-            await AsyncStorage.setItem('user_name', fullname);
-          }
 
-          Alert.alert(
-            '✅ Login Successful', 
-            `Welcome back, ${fullname || 'User'}!`,
-            [
-              {
-                text: 'Continue',
-                onPress: () => {
-                  navigateToUserScreen(type, id);
-                }
-              }
-            ]
-          );
-        } catch (storageError) {
-          console.error('AsyncStorage error:', storageError);
-          Alert.alert('Storage Error', 'Failed to save login data. Please try again.');
+        await AsyncStorage.multiSet(userData);
+        console.log('💾 User data stored successfully');
+
+        // Clear password but keep phone if remembered
+        setPassword('');
+        if (!rememberMe) {
+          setPhone('');
+          setPhoneFormatted('');
         }
+
+        Alert.alert(
+          'Login Successful! 🎉',
+          `Welcome back, ${user.fullname || user.name || 'User'}!`,
+          [
+            {
+              text: 'Continue',
+              onPress: () => {
+                navigateToUserScreen(user.type, user.id);
+              }
+            }
+          ]
+        );
+
+      } else {
+        setConnectionStatus('disconnected');
+        console.log('❌ Login failed:', response.data.message);
+        Alert.alert(
+          'Login Failed',
+          response.data.message || 'Invalid phone number or password. Please try again.'
+        );
       }
+
     } catch (error) {
-      console.error('Login error:', error);
-      handleNetworkError(error);
+      console.error('❌ Login error:', error);
+      setConnectionStatus('disconnected');
+      
+      let errorTitle = 'Login Error';
+      let errorMessage = 'An unexpected error occurred. Please try again.';
+      
+      if (error.code === 'ECONNABORTED') {
+        errorTitle = 'Connection Timeout';
+        errorMessage = 'Request timed out. Please check your internet connection and try again.';
+      } else if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
+        errorTitle = 'Network Error';
+        errorMessage = 'Cannot connect to server. Please check:\n\n• Backend server is running\n• Phone and computer on same WiFi\n• Correct IP address in config\n• Firewall allows port 3000';
+      } else if (error.response) {
+        const status = error.response.status;
+        const data = error.response.data;
+        
+        switch (status) {
+          case 400:
+            errorTitle = 'Invalid Request';
+            errorMessage = data?.message || 'Please check your phone number and password.';
+            break;
+          case 401:
+            errorTitle = 'Authentication Failed';
+            errorMessage = 'Invalid phone number or password. Please try again.';
+            break;
+          case 403:
+            errorTitle = 'Account Not Approved';
+            errorMessage = data?.message || 'Your account is pending approval. Please contact administrator.';
+            break;
+          case 404:
+            errorTitle = 'Service Not Found';
+            errorMessage = 'Login service is not available. Please contact support.';
+            break;
+          case 429:
+            errorTitle = 'Too Many Attempts';
+            errorMessage = 'Too many login attempts. Please wait a moment and try again.';
+            break;
+          case 500:
+          case 502:
+          case 503:
+            errorTitle = 'Server Error';
+            errorMessage = 'Server is temporarily unavailable. Please try again later.';
+            break;
+          default:
+            errorMessage = data?.message || `Server error (${status}). Please try again.`;
+            break;
+        }
+      } else if (error.request) {
+        errorTitle = 'Network Error';
+        errorMessage = 'Cannot reach the server. Please check your internet connection.';
+      }
+
+      Alert.alert(errorTitle, errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleLoginError = (errorMessage, accountStatus) => {
-    console.error('Login error:', errorMessage, 'Status:', accountStatus);
-    
-    if (errorMessage.includes('approval pending') || errorMessage.includes('pending approval')) {
-      Alert.alert(
-        '⏳ Account Pending Approval', 
-        'Your account is still pending approval from the admin. Please contact support if this persists.',
-        [
-          {
-            text: 'Contact Support',
-            onPress: () => {
-              Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
-            }
-          },
-          {
-            text: 'OK',
-            onPress: () => {
-              setPhone('');
-              setPassword('');
-            }
-          }
-        ]
-      );
-    } else if (errorMessage.includes('Invalid credentials') || errorMessage.includes('Invalid phone') || errorMessage.includes('Invalid password')) {
-      Alert.alert(
-        '❌ Login Failed', 
-        'Invalid phone number or password. Please check your credentials and try again.',
-        [
-          {
-            text: 'Forgot Password?',
-            onPress: () => {
-              Alert.alert('Password Recovery', 'Please contact admin to reset your password at: admin@company.com');
-            }
-          },
-          {
-            text: 'OK',
-            style: 'default'
-          }
-        ]
-      );
-    } else if (errorMessage.includes('rejected')) {
-      Alert.alert(
-        '❌ Account Rejected', 
-        'Your account has been rejected. Please contact admin for more information.',
-        [
-          {
-            text: 'Contact Support',
-            onPress: () => {
-              Alert.alert('Contact Support', 'Please contact admin at: admin@company.com or call +91-9876543210');
-            }
-          },
-          {
-            text: 'OK',
-            onPress: () => {
-              setPhone('');
-              setPassword('');
-            }
-          }
-        ]
-      );
-    } else {
-      Alert.alert('❌ Login Failed', errorMessage || 'An error occurred during login');
-    }
-  };
-
-  const handleNetworkError = (error) => {
-    if (error.code === 'ECONNABORTED') {
-      Alert.alert(
-        '⏱️ Connection Timeout', 
-        'The request timed out. Please check your internet connection and try again.'
-      );
-    } else if (error.response) {
-      console.error('Error response:', error.response.data);
-      const errorMessage = error.response.data?.error;
+  const testConnection = async () => {
+    try {
+      setLoading(true);
+      setConnectionStatus('unknown');
       
-      if (error.response.status === 403) {
-        handleLoginError(errorMessage || 'Access denied', error.response.data?.accountStatus);
-      } else if (error.response.status === 401) {
-        handleLoginError(errorMessage || 'Invalid credentials');
-      } else if (error.response.status >= 500) {
-        Alert.alert('Server Error', 'Server is currently unavailable. Please try again later.');
-      } else {
-        Alert.alert('Error', errorMessage || 'Server error occurred');
-      }
-    } else if (error.request) {
-      console.error('Network error:', error.request);
+      const healthUrl = `${API_CONFIG.BASE_URL}${API_ENDPOINTS.HEALTH}`;
+      console.log('🔍 Testing connection to:', healthUrl);
+      
+      // Show current config for debugging
+      console.log('🔧 Current API Config:', {
+        BASE_URL: API_CONFIG.BASE_URL,
+        HEALTH_ENDPOINT: API_ENDPOINTS.HEALTH,
+        FULL_URL: healthUrl
+      });
+      
+      const response = await axios.get(healthUrl, {
+        timeout: 10000,
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+      
+      console.log('🏥 Health check response:', response.data);
+      setConnectionStatus('connected');
+      
       Alert.alert(
-        '🌐 Network Error', 
-        'Unable to connect to server. Please check your internet connection and try again.'
+        '✅ Connection Test Successful!',
+        `Server is reachable at:\n${API_CONFIG.BASE_URL}\n\nServer Status: ${response.data.message || 'Running'}\n\nYou can now try logging in.`
       );
-    } else {
-      console.error('Request error:', error.message);
-      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    } catch (error) {
+      console.error('🔥 Connection test failed:', error);
+      setConnectionStatus('disconnected');
+      
+      // Enhanced error debugging
+      let errorDetails = `Error Type: ${error.constructor.name}\n`;
+      errorDetails += `Error Code: ${error.code || 'Unknown'}\n`;
+      errorDetails += `Error Message: ${error.message}\n`;
+      
+      if (error.response) {
+        errorDetails += `Response Status: ${error.response.status}\n`;
+        errorDetails += `Response Data: ${JSON.stringify(error.response.data)}\n`;
+      }
+      
+      console.log('🔍 Detailed error info:', errorDetails);
+      
+      let errorMessage = `❌ Cannot reach server at:\n${API_CONFIG.BASE_URL}`;
+      
+      if (error.code === 'ECONNABORTED') {
+        errorMessage += '\n\n⏱️ Connection timed out (10s)';
+      } else if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+        errorMessage += '\n\n🌐 Network Error - Server unreachable';
+      } else if (error.response) {
+        errorMessage += `\n\n📡 Server responded with error (${error.response.status})`;
+      } else {
+        errorMessage += `\n\n🔍 ${error.message}`;
+      }
+      
+      errorMessage += '\n\n🔧 Troubleshooting Steps:';
+      errorMessage += '\n• Check if backend server is running';
+      errorMessage += '\n• Verify IP address in ApiConfig.js';
+      errorMessage += '\n• Ensure same WiFi network';
+      errorMessage += '\n• Check firewall/antivirus settings';
+      errorMessage += '\n• Try restarting Metro bundler';
+      
+      Alert.alert('❌ Connection Test Failed', errorMessage, [
+        {
+          text: 'Show Debug Info',
+          onPress: () => {
+            Alert.alert('Debug Information', errorDetails);
+          }
+        },
+        {
+          text: 'Network Setup Help',
+          onPress: () => showNetworkSetupHelp()
+        },
+        {
+          text: 'OK',
+          style: 'cancel'
+        }
+      ]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handlePhoneChange = (text) => {
-    const cleaned = text.replace(/\D/g, '');
-    if (cleaned.length <= 10) {
-      setPhone(cleaned);
+  const showNetworkSetupHelp = () => {
+    Alert.alert(
+      '🔧 Network Setup Guide',
+      '1. BACKEND SERVER:\n' +
+      '   • Start your Node.js server: npm start\n' +
+      '   • Check server logs for errors\n' +
+      '   • Verify server runs on correct port\n\n' +
+      '2. IP ADDRESS:\n' +
+      '   • Use computer\'s local IP (not localhost)\n' +
+      '   • Windows: ipconfig\n' +
+      '   • Mac/Linux: ifconfig\n' +
+      '   • Should look like: 192.168.x.x\n\n' +
+      '3. FIREWALL:\n' +
+      '   • Allow Node.js through firewall\n' +
+      '   • Allow port 3000 (or your port)\n\n' +
+      '4. WIFI:\n' +
+      '   • Both devices on same network\n' +
+      '   • No VPN or proxy blocking\n\n' +
+      '5. CONFIG FILE:\n' +
+      '   • Check ApiConfig.js has correct URL\n' +
+      '   • Format: http://192.168.x.x:3000',
+      [
+        {
+          text: 'Test Different URL',
+          onPress: () => showCustomURLTest()
+        },
+        {
+          text: 'OK'
+        }
+      ]
+    );
+  };
+
+  const showCustomURLTest = () => {
+    Alert.prompt(
+      'Test Custom URL',
+      'Enter server URL to test:\n(e.g., http://192.168.1.100:3000)',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Test',
+          onPress: (url) => testCustomURL(url)
+        }
+      ],
+      'plain-text',
+      API_CONFIG.BASE_URL
+    );
+  };
+
+  const testCustomURL = async (customUrl) => {
+    if (!customUrl || !customUrl.trim()) {
+      Alert.alert('Error', 'Please enter a valid URL');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      console.log('🔍 Testing custom URL:', customUrl);
+      
+      const testUrl = customUrl.endsWith('/') ? customUrl.slice(0, -1) : customUrl;
+      const healthUrl = `${testUrl}${API_ENDPOINTS.HEALTH}`;
+      
+      const response = await axios.get(healthUrl, {
+        timeout: 10000,
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+      
+      Alert.alert(
+        '✅ Custom URL Test Successful!',
+        `Server reachable at:\n${testUrl}\n\nUpdate your ApiConfig.js file with this URL to fix the connection.`
+      );
+      
+    } catch (error) {
+      Alert.alert(
+        '❌ Custom URL Test Failed',
+        `Cannot reach server at:\n${customUrl}\n\nError: ${error.message}`
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getConnectionStatusColor = () => {
+    switch (connectionStatus) {
+      case 'connected': return '#10B981';
+      case 'disconnected': return '#EF4444';
+      default: return '#6B7280';
+    }
+  };
+
+  const getConnectionStatusText = () => {
+    switch (connectionStatus) {
+      case 'connected': return '🟢 Connected';
+      case 'disconnected': return '🔴 Disconnected';
+      default: return '🟡 Unknown';
     }
   };
 
@@ -333,17 +579,93 @@ const LoginForm = ({ navigation }) => {
     );
   };
 
+  const clearStoredLoginData = async () => {
+    try {
+      Alert.alert(
+        'Clear Stored Login',
+        'This will clear all stored login data and remembered credentials. Are you sure?',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel'
+          },
+          {
+            text: 'Clear Data',
+            onPress: async () => {
+              await AsyncStorage.multiRemove([
+                'user_id', 'user_type', 'user_name', 'user_phone', 
+                'user_email', 'authToken', 'userStatus', 'isApproved', 
+                'loginTime', 'rememberedPhone', 'rememberMe'
+              ]);
+              
+              // Reset form state
+              setPhone('');
+              setPassword('');
+              setPhoneFormatted('');
+              setRememberMe(false);
+              setConnectionStatus('unknown');
+              
+              Alert.alert(
+                '✅ Data Cleared',
+                'All stored login data has been cleared. You can now login with any account.'
+              );
+              
+              console.log('All stored login data cleared successfully');
+            },
+            style: 'destructive'
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error clearing stored data:', error);
+      Alert.alert('Error', 'Failed to clear stored data. Please try again.');
+    }
+  };
+
+  const showCurrentConfig = () => {
+    const configInfo = `📡 CURRENT API CONFIGURATION:
+
+🔗 Base URL: ${API_CONFIG.BASE_URL}
+🏥 Health Endpoint: ${API_ENDPOINTS.HEALTH}
+🔑 Login Endpoint: ${API_ENDPOINTS.LOGIN}
+⏱️ Timeout: ${API_CONFIG.TIMEOUT || 15000}ms
+
+🌐 Full URLs:
+• Health: ${API_CONFIG.BASE_URL}${API_ENDPOINTS.HEALTH}
+• Login: ${API_CONFIG.BASE_URL}${API_ENDPOINTS.LOGIN}
+
+📍 Connection Status: ${getConnectionStatusText()}
+
+💡 TIP: If using localhost or 127.0.0.1, change to your computer's IP address (e.g., 192.168.1.100)`;
+
+    Alert.alert('API Configuration', configInfo, [
+      {
+        text: 'Test Custom URL',
+        onPress: () => showCustomURLTest()
+      },
+      {
+        text: 'Copy Base URL',
+        onPress: () => {
+          // Note: Clipboard not available in this context, but we can show it
+          Alert.alert('Base URL', API_CONFIG.BASE_URL);
+        }
+      },
+      {
+        text: 'OK'
+      }
+    ]);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView 
-        style={styles.keyboardContainer} 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        style={styles.keyboardContainer}
       >
         <ScrollView 
           contentContainerStyle={styles.scrollContainer}
-          showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
           <View style={styles.backgroundGradient} />
           
@@ -352,37 +674,45 @@ const LoginForm = ({ navigation }) => {
               styles.loginCard,
               {
                 opacity: fadeAnim,
-                transform: [{ translateY: slideAnim }],
-              },
+                transform: [{ translateY: slideAnim }]
+              }
             ]}
           >
+            {/* Header Section */}
             <View style={styles.headerSection}>
               <View style={styles.logoContainer}>
                 <Text style={styles.logoText}>🏢</Text>
               </View>
               <Title style={styles.title}>Welcome Back</Title>
               <Text style={styles.subtitle}>
-                Sign in to access your dashboard and manage your account securely
+                Sign in to your account to continue
               </Text>
               <Text style={styles.serverInfo}>
-                Connected to: {API_CONFIG.BASE_URL}
+                Server: {API_CONFIG.BASE_URL}
               </Text>
             </View>
 
+            {/* Connection Status */}
+            <View style={[styles.connectionStatus, { borderColor: getConnectionStatusColor() }]}>
+              <Text style={[styles.connectionText, { color: getConnectionStatusColor() }]}>
+                {getConnectionStatusText()}
+              </Text>
+            </View>
+
+            {/* Form Section */}
             <View style={styles.formSection}>
+              {/* Phone Input */}
               <View style={styles.inputContainer}>
                 <Text style={styles.inputLabel}>Phone Number</Text>
                 <TextInput
-                  mode="outlined"
                   style={styles.input}
+                  mode="outlined"
+                  placeholder="Enter 10-digit phone number"
                   value={phone}
                   onChangeText={handlePhoneChange}
-                  keyboardType="numeric"
+                  keyboardType="phone-pad"
                   maxLength={10}
-                  placeholder="Enter your 10-digit phone number"
                   left={<TextInput.Icon icon="phone" />}
-                  autoCapitalize="none"
-                  autoCorrect={false}
                   theme={{
                     colors: {
                       primary: '#6366F1',
@@ -390,29 +720,28 @@ const LoginForm = ({ navigation }) => {
                     }
                   }}
                 />
-                <Text style={styles.phonePreview}>
-                  {phone ? `+91 ${phone}` : 'Format: +91 XXXXXXXXXX'}
-                </Text>
+                {phoneFormatted ? (
+                  <Text style={styles.phonePreview}>{phoneFormatted}</Text>
+                ) : null}
               </View>
 
+              {/* Password Input */}
               <View style={styles.inputContainer}>
                 <Text style={styles.inputLabel}>Password</Text>
                 <TextInput
-                  mode="outlined"
                   style={styles.input}
+                  mode="outlined"
+                  placeholder="Enter your password"
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
-                  placeholder="Enter your password"
                   left={<TextInput.Icon icon="lock" />}
                   right={
                     <TextInput.Icon 
-                      icon={showPassword ? 'eye-off' : 'eye'} 
+                      icon={showPassword ? "eye-off" : "eye"}
                       onPress={() => setShowPassword(!showPassword)}
                     />
                   }
-                  autoCapitalize="none"
-                  autoCorrect={false}
                   theme={{
                     colors: {
                       primary: '#6366F1',
@@ -422,75 +751,128 @@ const LoginForm = ({ navigation }) => {
                 />
               </View>
 
-              <TouchableOpacity 
-                style={styles.forgotPassword}
-                onPress={handleForgotPassword}
-              >
-                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-              </TouchableOpacity>
+              {/* Remember Me & Forgot Password */}
+              <View style={styles.optionsContainer}>
+                <TouchableOpacity
+                  style={styles.rememberContainer}
+                  onPress={() => setRememberMe(!rememberMe)}
+                >
+                  <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
+                    {rememberMe && <Text style={styles.checkmark}>✓</Text>}
+                  </View>
+                  <Text style={styles.rememberText}>Remember me</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
+                <TouchableOpacity onPress={handleForgotPassword}>
+                  <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Login Button */}
+              <TouchableOpacity 
                 style={[styles.loginButton, loading && styles.loginButtonDisabled]}
                 onPress={handleLogin}
                 disabled={loading}
-                activeOpacity={0.8}
               >
                 <View style={styles.buttonContent}>
-                  <Text style={styles.buttonText}>
-                    {loading ? 'Signing In...' : 'Sign In'}
-                  </Text>
-                  {!loading && <Text style={styles.buttonIcon}>→</Text>}
+                  {loading ? (
+                    <>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={styles.buttonText}>Signing In...</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.buttonText}>Sign In</Text>
+                      <Text style={styles.buttonIcon}>→</Text>
+                    </>
+                  )}
                 </View>
               </TouchableOpacity>
 
+              {/* Test Connection Button */}
+              <TouchableOpacity 
+                style={[styles.testButton, loading && styles.loginButtonDisabled]}
+                onPress={testConnection}
+                disabled={loading}
+              >
+                <View style={styles.buttonContent}>
+                  <Icon name="network-check" size={18} color="#FFFFFF" />
+                  <Text style={styles.buttonText}>Test Connection</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Clear Login Data Button */}
+              <TouchableOpacity 
+                style={[styles.clearDataButton, loading && styles.loginButtonDisabled]}
+                onPress={clearStoredLoginData}
+                disabled={loading}
+              >
+                <View style={styles.buttonContent}>
+                  <Icon name="logout" size={18} color="#FFFFFF" />
+                  <Text style={styles.buttonText}>Clear Stored Login</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Divider */}
               <View style={styles.dividerContainer}>
                 <View style={styles.dividerLine} />
                 <Text style={styles.dividerText}>or</Text>
                 <View style={styles.dividerLine} />
               </View>
 
-              <TouchableOpacity
+              {/* Signup Button */}
+              <TouchableOpacity 
                 style={styles.signupButton}
                 onPress={() => navigation.navigate('Signup')}
-                activeOpacity={0.7}
               >
                 <Text style={styles.signupButtonText}>
                   Don't have an account? <Text style={styles.signupButtonTextBold}>Sign Up</Text>
                 </Text>
               </TouchableOpacity>
+            </View>
 
-              <View style={styles.infoContainer}>
-                <Icon name="info" size={16} color="#6366F1" />
-                <Text style={styles.infoText}>
-                  💡 Employee accounts require admin approval. Contact support if you have login issues.
-                </Text>
-              </View>
+            {/* Info Container */}
+            <View style={styles.infoContainer}>
+              <Icon name="info" size={16} color="#4F46E5" />
+              <Text style={styles.infoText}>
+                Having trouble connecting? Make sure your phone and computer are on the same WiFi network, and the backend server is running.
+              </Text>
+            </View>
 
-              <View style={styles.supportContainer}>
-                <Text style={styles.supportTitle}>Need Help?</Text>
-                <View style={styles.supportButtons}>
-                  <TouchableOpacity
-                    style={styles.supportButton}
-                    onPress={() => Alert.alert('Call Support', 'Please call: +91-9876543210')}
-                  >
-                    <Icon name="phone" size={16} color="#10B981" />
-                    <Text style={styles.supportButtonText}>Call Support</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity
-                    style={styles.supportButton}
-                    onPress={() => Alert.alert('Email Support', 'Please email: admin@company.com')}
-                  >
-                    <Icon name="email" size={16} color="#10B981" />
-                    <Text style={styles.supportButtonText}>Email Support</Text>
-                  </TouchableOpacity>
-                </View>
+            {/* Support Container */}
+            <View style={styles.supportContainer}>
+              <Text style={styles.supportTitle}>Need Help?</Text>
+              <View style={styles.supportButtons}>
+                <TouchableOpacity 
+                  style={styles.supportButton}
+                  onPress={() => showNetworkSetupHelp()}
+                >
+                  <Icon name="help" size={14} color="#10B981" />
+                  <Text style={styles.supportButtonText}>Network Help</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.supportButton}
+                  onPress={() => showCurrentConfig()}
+                >
+                  <Icon name="settings" size={14} color="#10B981" />
+                  <Text style={styles.supportButtonText}>Show Config</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.supportButton}
+                  onPress={() => Alert.alert('Contact Support', 'Please contact your system administrator for login issues.')}
+                >
+                  <Icon name="support-agent" size={14} color="#10B981" />
+                  <Text style={styles.supportButtonText}>Contact</Text>
+                </TouchableOpacity>
               </View>
             </View>
           </Animated.View>
 
+          {/* Footer */}
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Secure • Reliable • Fast</Text>
+            <Text style={styles.footerText}>
+              BHAI CHARA ENTERPRISE
+            </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -501,7 +883,7 @@ const LoginForm = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F1F5F9',
   },
   keyboardContainer: {
     flex: 1,
@@ -509,7 +891,8 @@ const styles = StyleSheet.create({
   scrollContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 20,
     minHeight: height,
   },
   backgroundGradient: {
@@ -575,8 +958,20 @@ const styles = StyleSheet.create({
   serverInfo: {
     fontSize: 12,
     color: '#6366F1',
-    fontFamily: 'monospace',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     textAlign: 'center',
+  },
+  connectionStatus: {
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 24,
+    alignItems: 'center',
+  },
+  connectionText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   formSection: {
     width: '100%',
@@ -602,10 +997,39 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     fontWeight: '500',
   },
-  forgotPassword: {
-    alignItems: 'flex-end',
+  optionsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 24,
-    marginTop: -8,
+  },
+  rememberContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderWidth: 2,
+    borderColor: '#ddd',
+    borderRadius: 4,
+    marginRight: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: '#6366F1',
+    borderColor: '#6366F1',
+  },
+  checkmark: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  rememberText: {
+    fontSize: 14,
+    color: '#64748B',
+    fontWeight: '500',
   },
   forgotPasswordText: {
     color: '#6366F1',
@@ -625,9 +1049,43 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 16,
     elevation: 8,
-    marginBottom: 24,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#8B5CF6',
+  },
+  testButton: {
+    backgroundColor: '#10B981',
+    borderRadius: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+    shadowColor: '#10B981',
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#059669',
+  },
+  clearDataButton: {
+    backgroundColor: '#EF4444',
+    borderRadius: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+    shadowColor: '#EF4444',
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 8,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#DC2626',
   },
   loginButtonDisabled: {
     backgroundColor: '#9CA3AF',
