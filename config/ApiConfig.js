@@ -1,6 +1,8 @@
+// config/ApiConfig.js - Compatible with your LoginForm
+
 export const API_CONFIG = {
   BASE_URL: 'http://192.168.29.161:3000',
-  TIMEOUT: 30000, // Increased timeout for production
+  TIMEOUT: 30000,
   RETRY_ATTEMPTS: 3,
   RETRY_DELAY: 1000,
   HEADERS: {
@@ -9,12 +11,30 @@ export const API_CONFIG = {
   }
 };
 
+// Simple flat structure that works with your existing LoginForm
 export const API_ENDPOINTS = {
-  // Auth endpoints
+  // Auth endpoints (flat structure for compatibility)
   LOGIN: '/api/auth/login',
   SIGNUP: '/api/auth/signup',
   LOGOUT: '/api/auth/logout',
   PROFILE: '/api/auth/profile',
+  HEALTH: '/health',
+  
+  // Keep your nested structure too for other components
+  AUTH: {
+    LOGIN: '/api/auth/login',
+    SIGNUP: '/api/auth/signup',
+    LOGOUT: '/api/auth/logout',
+    PROFILE: '/api/auth/profile',
+    CHANGE_PASSWORD: '/api/auth/change-password',
+    STATUS: '/api/auth/status',
+  },
+  
+  UTILS: {
+    HEALTH: '/health',
+    VERSION: '/api/utils/version',
+    CONFIG: '/api/utils/config',
+  },
   
   // Admin endpoints
   ADMIN_DASHBOARD: '/api/admin/dashboard',
@@ -23,8 +43,6 @@ export const API_ENDPOINTS = {
   ADMIN_APPROVE_USER: '/api/admin/approve-user',
   ADMIN_REJECT_USER: '/api/admin/reject-user',
   ADMIN_FEEDBACK: '/api/admin/feedback',
-  ADMIN_FEEDBACK_RESPOND: '/api/admin/feedback/:id/respond',
-  ADMIN_FEEDBACK_STATS: '/api/admin/feedback/stats',
   
   // Bills endpoints
   BILLS_ADMIN: '/api/bills/admin',
@@ -37,11 +55,6 @@ export const API_ENDPOINTS = {
   CLIENT_BILL_DETAILS: '/api/client/bill',
   CLIENT_FEEDBACK: '/api/client/feedback',
   
-  // Feedback endpoints
-  FEEDBACK: '/api/feedback',
-  FEEDBACK_ADMIN: '/api/feedback/admin',
-  FEEDBACK_RESPOND: '/api/feedback/:id/respond',
-  
   // Other endpoints
   ORDERS: '/api/orders',
   MATERIALS: '/api/materials/getdata',
@@ -50,65 +63,48 @@ export const API_ENDPOINTS = {
   SALES_CUSTOMERS: '/api/sales/customers',
   SALES_ORDERS: '/api/sales/orders',
   
-  // Health check
-  HEALTH: '/health',
-  API_HEALTH: '/api/health',
-  HEALTH_DETAILED: '/api/health/detailed',
+  // Feedback endpoints
+  FEEDBACK: '/api/feedback',
+  FEEDBACK_ADMIN: '/api/feedback/admin',
+  FEEDBACK_RESPOND: '/api/feedback/:id/respond',
 };
 
-// Enhanced API utility functions
-export const apiUtils = {
-  // Retry mechanism for failed requests
-  async fetchWithRetry(url, options = {}, retries = API_CONFIG.RETRY_ATTEMPTS) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.TIMEOUT);
-      
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal,
-        headers: {
-          ...API_CONFIG.HEADERS,
-          ...options.headers
-        }
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok && retries > 0) {
-        await new Promise(resolve => setTimeout(resolve, API_CONFIG.RETRY_DELAY));
-        return this.fetchWithRetry(url, options, retries - 1);
-      }
-      
-      return response;
-    } catch (error) {
-      if (retries > 0 && error.name !== 'AbortError') {
-        await new Promise(resolve => setTimeout(resolve, API_CONFIG.RETRY_DELAY));
-        return this.fetchWithRetry(url, options, retries - 1);
-      }
-      throw error;
-    }
-  },
-
-  // Build URL with base URL
-  buildUrl(endpoint, params = {}) {
+// API Helper functions
+export const apiHelpers = {
+  buildUrl: (endpoint, params = {}) => {
     let url = `${API_CONFIG.BASE_URL}${endpoint}`;
-    
-    // Replace path parameters
-    Object.entries(params).forEach(([key, value]) => {
-      url = url.replace(`:${key}`, encodeURIComponent(value));
-    });
-    
+    const queryParams = new URLSearchParams(params).toString();
+    if (queryParams) {
+      url += `?${queryParams}`;
+    }
     return url;
   },
-
-  // Get auth headers
-  getAuthHeaders(token) {
-    return {
-      ...API_CONFIG.HEADERS,
-      'Authorization': `Bearer ${token}`
+  
+  getDefaultOptions: (method = 'GET', body = null) => {
+    const options = {
+      method,
+      headers: { ...API_CONFIG.HEADERS },
+      timeout: API_CONFIG.TIMEOUT,
     };
+    
+    if (body && method !== 'GET') {
+      options.body = typeof body === 'string' ? body : JSON.stringify(body);
+    }
+    
+    return options;
   }
 };
 
-export default API_CONFIG;
+// Test connection function
+export const testConnection = async () => {
+  try {
+    console.log('Testing API connection...');
+    const response = await fetch(`${API_CONFIG.BASE_URL}${API_ENDPOINTS.HEALTH}`);
+    const data = await response.json();
+    console.log('API connection successful:', data);
+    return true;
+  } catch (error) {
+    console.error('API connection failed:', error.message);
+    return false;
+  }
+};

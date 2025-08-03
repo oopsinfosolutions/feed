@@ -112,6 +112,7 @@ const LoginForm = ({ navigation }) => {
 
   const testInitialConnection = async () => {
     try {
+      // Use the correct health endpoint
       const healthUrl = `${API_CONFIG.BASE_URL}${API_ENDPOINTS.HEALTH}`;
       const response = await axios.get(healthUrl, { timeout: 5000 });
       setConnectionStatus(response.status === 200 ? 'connected' : 'disconnected');
@@ -188,43 +189,132 @@ const LoginForm = ({ navigation }) => {
     console.log('Original user type from server:', userType);
     console.log('User ID:', userId);
     
-    const normalizedType = userType.toLowerCase().trim().replace(/\s+/g, '_');
+    // Normalize the user type for consistent matching
+    const normalizedType = userType.toLowerCase().trim().replace(/[\s_-]+/g, '_');
     console.log('Normalized user type:', normalizedType);
     
+    // Comprehensive navigation mapping with all possible variations
     const navigationMap = {
+      // Admin variations
       'admin': 'AdminScreen',
       'administrator': 'AdminScreen',
-      'dealer': 'EmployeeDataScreen',
+      'admin_user': 'AdminScreen',
+      
+      // Customer/Client variations
       'client': 'CustomerScreen',
       'customer': 'CustomerScreen',
+      'user': 'CustomerScreen',
+      'buyer': 'CustomerScreen',
+      
+      // Field Employee variations
       'field_employee': 'EmployeeScreen',
       'fieldemployee': 'EmployeeScreen',
       'field-employee': 'EmployeeScreen',
       'employee': 'EmployeeScreen',
-      'officeemp': 'OfficeEmployeeScreen',
+      'worker': 'EmployeeScreen',
+      'field_worker': 'EmployeeScreen',
+      
+      // Office Employee variations
       'office_employee': 'OfficeEmployeeScreen',
-      'office-employee': 'OfficeEmployeeScreen',
       'officeemployee': 'OfficeEmployeeScreen',
+      'office-employee': 'OfficeEmployeeScreen',
       'office': 'OfficeEmployeeScreen',
-      'sale_parchase': 'SalePurchaseEmployeeScreen',
+      'officeemp': 'OfficeEmployeeScreen',
+      'office_emp': 'OfficeEmployeeScreen',
+      'staff': 'OfficeEmployeeScreen',
+      
+      // Sales/Purchase Employee variations
       'sale_purchase': 'SalePurchaseEmployeeScreen',
       'sales_purchase': 'SalePurchaseEmployeeScreen',
-      'sales_&_purchase': 'SalePurchaseEmployeeScreen'
+      'sale_parchase': 'SalePurchaseEmployeeScreen', // Keep typo for backward compatibility
+      'sales_&_purchase': 'SalePurchaseEmployeeScreen',
+      'sales_and_purchase': 'SalePurchaseEmployeeScreen',
+      'salesperson': 'SalePurchaseEmployeeScreen',
+      'sales': 'SalePurchaseEmployeeScreen',
+      'purchase': 'SalePurchaseEmployeeScreen',
+      
+      // Dealer variations
+      'dealer': 'EmployeeDataScreen',
+      'vendor': 'EmployeeDataScreen',
+      'supplier': 'EmployeeDataScreen',
+      'distributor': 'EmployeeDataScreen',
     };
     
-    const screenName = navigationMap[normalizedType];
+    // Get the target screen
+    let screenName = navigationMap[normalizedType];
     
-    if (screenName) {
-      console.log(`Navigating to: ${screenName} with userId: ${userId}`);
+    // Fallback logic if exact match not found
+    if (!screenName) {
+      console.log('Exact match not found, trying fallback logic...');
+      
+      // Check for partial matches
+      if (normalizedType.includes('admin')) {
+        screenName = 'AdminScreen';
+      } else if (normalizedType.includes('employee') || normalizedType.includes('worker')) {
+        if (normalizedType.includes('office')) {
+          screenName = 'OfficeEmployeeScreen';
+        } else if (normalizedType.includes('sale') || normalizedType.includes('purchase')) {
+          screenName = 'SalePurchaseEmployeeScreen';
+        } else {
+          screenName = 'EmployeeScreen';
+        }
+      } else if (normalizedType.includes('client') || normalizedType.includes('customer')) {
+        screenName = 'CustomerScreen';
+      } else if (normalizedType.includes('dealer') || normalizedType.includes('vendor')) {
+        screenName = 'EmployeeDataScreen';
+      }
+    }
+    
+    // Final fallback - default to customer screen for unknown types
+    if (!screenName) {
+      console.warn(`Unknown user type: "${userType}", defaulting to CustomerScreen`);
+      screenName = 'CustomerScreen';
+    }
+    
+    console.log(`Navigating to: ${screenName} with userId: ${userId}`);
+    
+    try {
+      // Reset navigation stack to prevent back navigation to login
       navigation.reset({
         index: 0,
-        routes: [{ name: screenName, params: { customerId: userId } }],
+        routes: [{ 
+          name: screenName, 
+          params: { 
+            customerId: userId,
+            userId: userId,
+            userType: userType,
+            userRole: userType
+          } 
+        }],
       });
-    } else {
-      console.log('Available navigation options:', Object.keys(navigationMap));
+      
+      console.log('Navigation successful');
+    } catch (navigationError) {
+      console.error('Navigation error:', navigationError);
+      
+      // Fallback navigation
       Alert.alert(
         'Navigation Error', 
-        `Unknown user role: "${userType}". Please contact administrator.`
+        `Could not navigate to ${screenName}. Redirecting to default screen.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              navigation.reset({
+                index: 0,
+                routes: [{ 
+                  name: 'CustomerScreen', 
+                  params: { 
+                    customerId: userId,
+                    userId: userId,
+                    userType: userType,
+                    userRole: userType
+                  } 
+                }],
+              });
+            }
+          }
+        ]
       );
     }
   };
@@ -236,7 +326,7 @@ const LoginForm = ({ navigation }) => {
       setLoading(true);
       setConnectionStatus('unknown');
       
-      // FIXED: Construct the full URL correctly
+      // FIXED: Use the correct API endpoint
       const loginUrl = `${API_CONFIG.BASE_URL}${API_ENDPOINTS.LOGIN}`;
       console.log('🔄 Making login request to:', loginUrl);
       console.log('📱 Phone:', phone);
@@ -377,6 +467,7 @@ const LoginForm = ({ navigation }) => {
       setLoading(true);
       setConnectionStatus('unknown');
       
+      // FIXED: Use the correct health endpoint
       const healthUrl = `${API_CONFIG.BASE_URL}${API_ENDPOINTS.HEALTH}`;
       console.log('🔍 Testing connection to:', healthUrl);
       
@@ -384,7 +475,8 @@ const LoginForm = ({ navigation }) => {
       console.log('🔧 Current API Config:', {
         BASE_URL: API_CONFIG.BASE_URL,
         HEALTH_ENDPOINT: API_ENDPOINTS.HEALTH,
-        FULL_URL: healthUrl
+        LOGIN_ENDPOINT: API_ENDPOINTS.LOGIN,
+        FULL_HEALTH_URL: healthUrl
       });
       
       const response = await axios.get(healthUrl, {
