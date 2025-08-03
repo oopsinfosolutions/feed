@@ -6,10 +6,6 @@ const SignUp = require('../models/signup');
 const router = express.Router();
 
 console.log('✅ auth.js loaded at:', __filename);
-console.log('🔍 Auth routes defined:');
-router.stack.forEach(layer => {
-  console.log(`   ${layer.route.stack[0].method.toUpperCase()} /api/auth${layer.route.path}`);
-});
 
 // =================================================================
 // HELPER FUNCTIONS
@@ -84,16 +80,16 @@ router.post('/signup', async (req, res) => {
       });
     }
 
-    // Clean and validate phone number
+    // Validate and clean phone number
     const cleanPhone = phone.replace(/\D/g, '');
-    if (cleanPhone.length < 10) {
+    if (cleanPhone.length !== 10) {
       return res.status(400).json({
         success: false,
-        error: 'Please enter a valid phone number (at least 10 digits)'
+        error: 'Please enter a valid 10-digit phone number'
       });
     }
 
-    // Validate password strength
+    // Password validation
     if (password.length < 6) {
       return res.status(400).json({
         success: false,
@@ -101,101 +97,78 @@ router.post('/signup', async (req, res) => {
       });
     }
 
-    // Check for existing email
-    const existingEmail = await SignUp.findOne({ 
-      where: { email: email.toLowerCase().trim() } 
+    // Check if user already exists
+    const existingUser = await SignUp.findOne({
+      where: {
+        [Op.or]: [
+          { email: email.toLowerCase().trim() },
+          { phone: cleanPhone }
+        ]
+      }
     });
-    
-    if (existingEmail) {
+
+    if (existingUser) {
       return res.status(409).json({
         success: false,
-        error: 'Email is already registered'
+        error: 'User with this email or phone already exists'
       });
     }
-
-    // Check for existing phone
-    const existingPhone = await SignUp.findOne({ 
-      where: { phone: cleanPhone } 
-    });
-    
-    if (existingPhone) {
-      return res.status(409).json({
-        success: false,
-        error: 'Phone number is already registered'
-      });
-    }
-
-    // Normalize type and check approval requirement
-    const normalizedType = normalizeUserType(type);
-    const needsApproval = requiresApproval(normalizedType);
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-    
-    // Generate user ID
-    const userId = generateUserId();
 
-    // Create user
-    const user = await SignUp.create({
-      user_id: userId,
+    // Normalize user type
+    const normalizedType = normalizeUserType(type);
+    const needsApproval = requiresApproval(normalizedType);
+
+    // Create new user
+    const newUser = await SignUp.create({
+      user_id: generateUserId(),
       fullname: fullname.trim(),
       email: email.toLowerCase().trim(),
       phone: cleanPhone,
-      password: hashedPassword, // Store hashed password
+      password: hashedPassword,
       type: normalizedType,
       department: department || null,
       employeeId: employeeId || null,
+      status: needsApproval ? 'pending_approval' : 'active',
       isApproved: !needsApproval,
-      status: needsApproval ? 'pending_approval' : 'approved',
-      submittedAt: needsApproval ? new Date() : null,
       createdAt: new Date(),
       updatedAt: new Date()
     });
 
-    console.log(`User registered: ${user.fullname} (${user.email}) - Needs approval: ${needsApproval}`);
+    console.log(`User registered: ${newUser.fullname} (${newUser.email})`);
 
-    // Response based on approval requirement
-    if (needsApproval) {
-      return res.status(201).json({
-        success: true,
-        message: 'Registration successful. Your account is pending admin approval.',
-        requiresApproval: true,
-        user: {
-          id: user.id,
-          user_id: user.user_id,
-          fullname: user.fullname,
-          email: user.email,
-          type: user.type,
-          status: user.status
-        }
-      });
+    // Generate JWT token only if approved
+    let token = null;
+    if (!needsApproval) {
+      token = jwt.sign(
+        {
+          userId: newUser.id,
+          user_id: newUser.user_id,
+          email: newUser.email,
+          type: newUser.type
+        },
+        process.env.JWT_SECRET || 'your-secret-key',
+        { expiresIn: '30d' }
+      );
     }
-
-    // Generate JWT token for approved users
-    const token = jwt.sign(
-      { 
-        userId: user.id, 
-        user_id: user.user_id,
-        email: user.email,
-        type: user.type 
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '30d' }
-    );
 
     res.status(201).json({
       success: true,
-      message: 'User registered and logged in successfully.',
-      requiresApproval: false,
+      message: needsApproval 
+        ? 'Registration successful! Your account is pending approval.'
+        : 'Registration successful!',
+      requiresApproval: needsApproval,
       token,
       user: {
-        id: user.id,
-        user_id: user.user_id,
-        fullname: user.fullname,
-        email: user.email,
-        phone: user.phone,
-        type: user.type,
-        status: user.status
+        id: newUser.id,
+        user_id: newUser.user_id,
+        fullname: newUser.fullname,
+        email: newUser.email,
+        phone: newUser.phone,
+        type: newUser.type,
+        status: newUser.status
       }
     });
 
@@ -209,46 +182,37 @@ router.post('/signup', async (req, res) => {
 });
 
 // User Login
-
 router.post('/login', async (req, res) => {
   try {
     console.log('\n🔄 === LOGIN ATTEMPT STARTED ===');
     console.log('📨 Request body:', req.body);
-    console.log('📍 Request headers:', req.headers);
     
-    const { phone, password, email } = req.body;
+    const { identifier, password, phone, email } = req.body;
+
+    // Support both old format (phone/email) and new format (identifier)
+    const loginIdentifier = identifier || phone || email;
 
     // Enhanced validation with better logging
-    if ((!phone && !email) || !password) {
-      console.log('❌ Validation failed: Missing phone/email or password');
+    if (!loginIdentifier || !password) {
+      console.log('❌ Validation failed: Missing identifier or password');
       return res.status(400).json({
         success: false,
         error: 'Phone/Email and password are required'
       });
     }
 
-    // Prepare search criteria with logging
+    // Prepare search criteria
     let whereClause = {};
-    if (phone) {
-      const cleanPhone = phone.replace(/\D/g, '');
+    
+    // Check if identifier looks like an email
+    if (loginIdentifier.includes('@')) {
+      whereClause.email = loginIdentifier.toLowerCase().trim();
+      console.log('🔍 Searching by email:', loginIdentifier.toLowerCase().trim());
+    } else {
+      // Assume it's a phone number
+      const cleanPhone = loginIdentifier.replace(/\D/g, '');
       whereClause.phone = cleanPhone;
       console.log('🔍 Searching by phone:', cleanPhone);
-    }
-    if (email) {
-      whereClause.email = email.toLowerCase().trim();
-      console.log('🔍 Searching by email:', email.toLowerCase().trim());
-    }
-
-    // If both provided, use OR condition
-    if (phone && email) {
-      const cleanPhone = phone.replace(/\D/g, '');
-      whereClause = {
-        [Op.or]: [
-          { phone: cleanPhone },
-          { email: email.toLowerCase().trim() }
-        ]
-      };
-      console.log('🔍 Searching with OR condition:', whereClause);
     }
 
     console.log('🔍 Final where clause:', JSON.stringify(whereClause, null, 2));
@@ -266,88 +230,88 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Find user with enhanced logging
+    // Find user
     console.log('🔍 Searching for user...');
     const user = await SignUp.findOne({ where: whereClause });
 
     if (!user) {
       console.log('❌ User not found with criteria:', whereClause);
-      
-      // Debug: Show what users exist (be careful in production!)
-      const allUsers = await SignUp.findAll({ 
-        attributes: ['id', 'phone', 'email', 'fullname'],
-        limit: 5 
-      });
-      console.log('📊 Sample users in database:', allUsers.map(u => ({
-        id: u.id,
-        phone: u.phone,
-        email: u.email,
-        fullname: u.fullname
-      })));
-      
       return res.status(401).json({
         success: false,
-        error: 'Invalid credentials'
+        error: 'Invalid phone/email or password'
       });
     }
 
     console.log('✅ User found:', {
       id: user.id,
-      phone: user.phone,
-      email: user.email,
       fullname: user.fullname,
+      email: user.email,
+      phone: user.phone,
       type: user.type,
-      isApproved: user.isApproved,
-      status: user.status
+      status: user.status,
+      isApproved: user.isApproved
     });
 
-    // Enhanced password verification with logging
+    // Verify password
     console.log('🔐 Verifying password...');
-    let passwordValid = false;
+console.log('🔍 Stored password:', user.password);
+console.log('🔍 Provided password:', password);
+console.log('🔍 Password type check:', {
+  isBcrypt: user.password.startsWith('$2a$') || user.password.startsWith('$2b$'),
+  length: user.password.length,
+  firstChars: user.password.substring(0, 10)
+});
+
+let passwordValid = false;
+
+try {
+  // Check if password is bcrypt hashed
+  if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$')) {
+    console.log('🔐 Using bcrypt verification (hashed password)...');
+    passwordValid = await bcrypt.compare(password, user.password);
+    console.log('🔐 BCrypt result:', passwordValid);
+  } else {
+    console.log('🔐 Using plain text comparison (legacy password)...');
+    passwordValid = (password === user.password);
+    console.log('🔐 Plain text result:', passwordValid);
     
-    try {
-      // First try bcrypt (for hashed passwords)
-      if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$')) {
-        console.log('🔐 Using bcrypt verification...');
-        passwordValid = await bcrypt.compare(password, user.password);
-      } else {
-        console.log('🔐 Using plain text comparison...');
-        passwordValid = (password === user.password);
-      }
-      
-      console.log('🔐 Password verification result:', passwordValid);
-    } catch (passwordError) {
-      console.error('❌ Password verification error:', passwordError);
-      return res.status(500).json({
-        success: false,
-        error: 'Password verification failed'
-      });
+    // If password matches and it's plain text, hash it for future use
+    if (passwordValid) {
+      console.log('🔄 Converting plain text password to bcrypt hash...');
+      const hashedPassword = await bcrypt.hash(password, 10);
+      await user.update({ password: hashedPassword });
+      console.log('✅ Password converted to bcrypt hash');
     }
+  }
+  
+  console.log('🔐 Final password verification result:', passwordValid);
+} catch (bcryptError) {
+  console.error('❌ Password verification error:', bcryptError);
+  // Fallback to plain text comparison
+  console.log('🔄 Falling back to plain text comparison...');
+  passwordValid = (password === user.password);
+  console.log('🔐 Fallback result:', passwordValid);
+}
 
-    if (!passwordValid) {
-      console.log('❌ Invalid password for user:', user.email);
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid credentials'
-      });
-    }
+if (!passwordValid) {
+  console.log('❌ Password verification failed');
+  console.log('📊 Debug info:', {
+    providedPassword: password,
+    storedPassword: user.password,
+    bcryptCheck: user.password.startsWith('$2a$') || user.password.startsWith('$2b$'),
+    plainTextMatch: password === user.password
+  });
+  
+  return res.status(401).json({
+    success: false,
+    error: 'Invalid phone/email or password'
+  });
+}
 
-    // Check approval status with enhanced logging
-    console.log('✅ Password valid, checking approval status...');
-    const employeeTypesNeedingApproval = [
-      'field_employee', 'office_employee', 'sales_purchase',
-      'sale_parchase', 'employee', 'officeemp'
-    ];
-
-    const normalizedType = user.type.toLowerCase().replace(/\s+/g, '_');
-    console.log('👤 User type (normalized):', normalizedType);
-    console.log('🔒 Needs approval:', employeeTypesNeedingApproval.includes(normalizedType));
-    console.log('✅ Is approved:', user.isApproved);
-    console.log('📊 Status:', user.status);
-
-    if (employeeTypesNeedingApproval.includes(normalizedType)) {
-      if (!user.isApproved || user.status !== 'approved') {
-        let message = 'Your account is pending approval from admin.';
+    // Check if user is approved (for employee types)
+    if (requiresApproval(user.type)) {
+      if (!user.isApproved || user.status !== 'active') {
+        let message = 'Your account is pending approval. Please contact the administrator.';
 
         if (user.status === 'rejected') {
           message = 'Your account has been rejected. Please contact admin for more information.';
@@ -372,7 +336,7 @@ router.post('/login', async (req, res) => {
       }
     }
 
-    // Update last login with error handling
+    // Update last login
     try {
       console.log('📅 Updating last login...');
       await user.update({
@@ -382,7 +346,6 @@ router.post('/login', async (req, res) => {
       console.log('✅ Last login updated');
     } catch (updateError) {
       console.error('⚠️  Warning: Failed to update last login:', updateError);
-      // Don't fail the login for this
     }
 
     // Generate JWT token
@@ -434,11 +397,9 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Logout (if using token blacklisting)
+// Logout
 router.post('/logout', async (req, res) => {
   try {
-    // In a production app, you might want to blacklist the token
-    // For now, just send success response
     res.status(200).json({
       success: true,
       message: 'Logged out successfully'
@@ -456,10 +417,9 @@ router.post('/logout', async (req, res) => {
 // TOKEN VERIFICATION MIDDLEWARE
 // =================================================================
 
-// Middleware to verify JWT token
 const verifyToken = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1]; // Bearer TOKEN
+    const token = req.headers.authorization?.split(' ')[1];
 
     if (!token) {
       return res.status(401).json({
@@ -470,7 +430,6 @@ const verifyToken = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
     
-    // Get fresh user data
     const user = await SignUp.findByPk(decoded.userId);
     
     if (!user) {
@@ -495,7 +454,7 @@ const verifyToken = async (req, res, next) => {
 // PROFILE AND ACCOUNT MANAGEMENT
 // =================================================================
 
-// Get user profile (protected route)
+// Get user profile
 router.get('/profile', verifyToken, async (req, res) => {
   try {
     const user = req.user;
@@ -527,7 +486,7 @@ router.get('/profile', verifyToken, async (req, res) => {
   }
 });
 
-// Update user profile (protected route)
+// Update user profile
 router.patch('/profile', verifyToken, async (req, res) => {
   try {
     const user = req.user;
@@ -547,49 +506,17 @@ router.patch('/profile', verifyToken, async (req, res) => {
           error: 'Please enter a valid email address'
         });
       }
-      
-      // Check if email is already taken
-      const existingUser = await SignUp.findOne({
-        where: {
-          email: email.toLowerCase().trim(),
-          id: { [Op.ne]: user.id }
-        }
-      });
-      
-      if (existingUser) {
-        return res.status(409).json({
-          success: false,
-          error: 'Email is already registered'
-        });
-      }
-      
       updateData.email = email.toLowerCase().trim();
     }
     
     if (phone) {
       const cleanPhone = phone.replace(/\D/g, '');
-      if (cleanPhone.length < 10) {
+      if (cleanPhone.length !== 10) {
         return res.status(400).json({
           success: false,
-          error: 'Please enter a valid phone number'
+          error: 'Please enter a valid 10-digit phone number'
         });
       }
-      
-      // Check if phone is already taken
-      const existingUser = await SignUp.findOne({
-        where: {
-          phone: cleanPhone,
-          id: { [Op.ne]: user.id }
-        }
-      });
-      
-      if (existingUser) {
-        return res.status(409).json({
-          success: false,
-          error: 'Phone number is already registered'
-        });
-      }
-      
       updateData.phone = cleanPhone;
     }
 
@@ -601,7 +528,7 @@ router.patch('/profile', verifyToken, async (req, res) => {
     }
 
     updateData.updatedAt = new Date();
-    
+
     await user.update(updateData);
 
     console.log(`Profile updated for user: ${user.fullname} (${user.email})`);
@@ -629,7 +556,7 @@ router.patch('/profile', verifyToken, async (req, res) => {
   }
 });
 
-// Change password (protected route)
+// Change password
 router.patch('/change-password', verifyToken, async (req, res) => {
   try {
     const user = req.user;
@@ -688,10 +615,6 @@ router.patch('/change-password', verifyToken, async (req, res) => {
   }
 });
 
-// =================================================================
-// ACCOUNT STATUS ROUTES
-// =================================================================
-
 // Check account status
 router.get('/status/:identifier', async (req, res) => {
   try {
@@ -736,10 +659,16 @@ router.get('/status/:identifier', async (req, res) => {
     });
   }
 });
+
+// Log routes after they are defined
 console.log('🔍 Auth routes defined:');
-router.stack.forEach(layer => {
-  console.log(`   ${layer.route.stack[0].method.toUpperCase()} /api/auth${layer.route.path}`);
-});
+console.log('   POST /api/auth/signup');
+console.log('   POST /api/auth/login');
+console.log('   POST /api/auth/logout');
+console.log('   GET /api/auth/profile');
+console.log('   PATCH /api/auth/profile');
+console.log('   PATCH /api/auth/change-password');
+console.log('   GET /api/auth/status/:identifier');
 
 // Export the router and middleware
 router.verifyToken = verifyToken;

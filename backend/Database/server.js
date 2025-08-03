@@ -34,20 +34,24 @@ const clientRoutes = require('./routes/client');
 const utilsRoutes = require('./routes/utils');
 
 const app = express();
-app.use((req, res, next) => {
-  console.log(`📥 Incoming Request: ${req.method} ${req.originalUrl}`);
-  next();
-});
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // ============================================================================
-// PRODUCTION SECURITY & PERFORMANCE MIDDLEWARE
+// REQUEST LOGGING (FIRST MIDDLEWARE)
 // ============================================================================
-console.log('🔎 typeof authRoutes:', typeof authRoutes); // Should be 'function'
-console.log('🔎 authRoutes keys:', Object.keys(authRoutes)); // Should include 'verifyToken'
+app.use((req, res, next) => {
+  console.log(`📥 Incoming Request: ${req.method} ${req.originalUrl}`);
+  next();
+});
 
-// Security headers with enhanced configuration
+// ============================================================================
+// SECURITY & PERFORMANCE MIDDLEWARE
+// ============================================================================
+console.log('🔎 typeof authRoutes:', typeof authRoutes);
+console.log('🔎 authRoutes keys:', Object.keys(authRoutes));
+
+// Security headers
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -62,10 +66,10 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
-// Enhanced CORS configuration
+// CORS configuration
 app.use(cors({
   origin: NODE_ENV === 'production' 
-    ? ['http://localhost:8081', 'http://192.168.29.161:8081'] // Add your production URLs
+    ? ['http://localhost:8081', 'http://192.168.29.161:8081']
     : true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -75,37 +79,37 @@ app.use(cors({
 // Compression middleware
 app.use(compression());
 
-// Enhanced request logging
+// Request logging
 if (NODE_ENV === 'production') {
   app.use(morgan('combined'));
 } else {
   app.use(morgan('dev'));
 }
 
-// Enhanced rate limiting with different limits for different endpoints
-const createRateLimit = (windowMs, max, message) => rateLimit({
-  windowMs,
-  max,
-  message: { success: false, message },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+// Rate limiting (COMMENTED OUT FOR DEBUGGING - uncomment after fixing)
+// const createRateLimit = (windowMs, max, message) => rateLimit({
+//   windowMs,
+//   max,
+//   message: { success: false, message },
+//   standardHeaders: true,
+//   legacyHeaders: false,
+// });
 
-// General rate limit
-app.use('/api/', createRateLimit(
-  15 * 60 * 1000, // 15 minutes
-  NODE_ENV === 'production' ? 100 : 1000,
-  'Too many requests, please try again later.'
-));
+// // General rate limit
+// app.use('/api', createRateLimit(
+//   15 * 60 * 1000, // 15 minutes
+//   NODE_ENV === 'production' ? 100 : 1000,
+//   'Too many requests, please try again later.'
+// ));
 
-// Stricter rate limit for auth endpoints
-app.use('/api/auth/', createRateLimit(
-  15 * 60 * 1000, // 15 minutes
-  NODE_ENV === 'production' ? 20 : 100,
-  'Too many authentication attempts, please try again later.'
-));
+// // Auth rate limit
+// app.use('/api/auth', createRateLimit(
+//   15 * 60 * 1000, // 15 minutes
+//   NODE_ENV === 'production' ? 20 : 100,
+//   'Too many authentication attempts, please try again later.'
+// ));
 
-// Body parsing middleware with enhanced limits
+// Body parsing middleware
 app.use(express.json({ 
   limit: '50mb',
   verify: (req, res, buf) => {
@@ -129,7 +133,7 @@ app.use(express.urlencoded({
 // Static file serving
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Request ID middleware for tracking
+// Request ID middleware
 app.use((req, res, next) => {
   req.id = Math.random().toString(36).substr(2, 9);
   res.setHeader('X-Request-ID', req.id);
@@ -149,7 +153,7 @@ async function initializeDatabase() {
     // Setup associations
     await setupDatabaseAssociations();
 
-    // Sync database with enhanced options
+    // Sync database
     if (NODE_ENV === 'development') {
       await sequelize.sync({ alter: true });
       console.log('✅ Database synchronized');
@@ -192,7 +196,7 @@ async function setupDatabaseAssociations() {
 }
 
 // ============================================================================
-// ENHANCED HEALTH CHECK ROUTES
+// HEALTH CHECK ROUTES (BEFORE OTHER ROUTES)
 // ============================================================================
 
 app.get('/health', (req, res) => {
@@ -255,15 +259,38 @@ app.get('/api/health/detailed', async (req, res) => {
 });
 
 // ============================================================================
-// ENHANCED ROUTE MOUNTING WITH ERROR HANDLING
+// ROUTE MOUNTING
 // ============================================================================
 
 async function mountRoutes() {
   try {
     console.log('🔄 Mounting API routes...');
+    
+    // Debug authRoutes before mounting
+    console.log('🔍 Debugging authRoutes:');
+    console.log('typeof authRoutes:', typeof authRoutes);
+    console.log('authRoutes.stack length:', authRoutes.stack ? authRoutes.stack.length : 'undefined');
+    
+    if (authRoutes.stack) {
+      console.log('Routes in authRoutes.stack:');
+      authRoutes.stack.forEach((layer, index) => {
+        if (layer.route) {
+          const methods = Object.keys(layer.route.methods);
+          console.log(`  ${index}: ${methods.join(',').toUpperCase()} ${layer.route.path}`);
+        } else {
+          console.log(`  ${index}: middleware function`);
+        }
+      });
+    }
 
-    // Core API routes with enhanced error handling
-    app.use('/api/auth', authRoutes);
+    // Mount auth routes with debugging middleware
+    console.log('🔧 Mounting /api/auth routes...');
+    app.use('/api/auth', (req, res, next) => {
+      console.log(`🎯 Auth middleware hit: ${req.method} ${req.path}`);
+      next();
+    }, authRoutes);
+    
+    // Mount other routes
     app.use('/api/users', userRoutes);
     app.use('/api/materials', materialRoutes);
     app.use('/api/orders', orderRoutes);
@@ -282,6 +309,40 @@ async function mountRoutes() {
     app.use('/materials', materialRoutes);
 
     console.log('✅ All routes mounted successfully');
+    
+    // Test route registration
+    console.log('🧪 Testing route mounting...');
+    console.log('Express app routes after mounting:');
+    
+    // List all registered routes
+    app._router.stack.forEach((middleware, index) => {
+      if (middleware.route) {
+        // Direct route
+        console.log(`  Direct route: ${Object.keys(middleware.route.methods).join(',').toUpperCase()} ${middleware.route.path}`);
+      } else if (middleware.name === 'router' && middleware.regexp) {
+        // Router middleware
+        const routePath = middleware.regexp.source
+          .replace('\\', '')
+          .replace('/?(?=\\/|$)', '')
+          .replace('^', '')
+          .replace('$', '');
+        console.log(`  Router middleware: ${routePath} (${middleware.handle.stack ? middleware.handle.stack.length : 0} routes)`);
+        
+        // List routes within this router
+        if (middleware.handle && middleware.handle.stack) {
+          middleware.handle.stack.forEach((routerLayer, routerIndex) => {
+            if (routerLayer.route) {
+              const methods = Object.keys(routerLayer.route.methods);
+              console.log(`    ${routerIndex}: ${methods.join(',').toUpperCase()} ${routePath}${routerLayer.route.path}`);
+            }
+          });
+        }
+      }
+    });
+    
+    console.log('🔍 Final route verification:');
+    console.log('Total middleware/routes registered:', app._router.stack.length);
+    
   } catch (error) {
     console.error('❌ Error mounting routes:', error);
     throw error;
@@ -289,104 +350,15 @@ async function mountRoutes() {
 }
 
 // ============================================================================
-// ENHANCED ERROR HANDLING & 404 ROUTES
+// ERROR HANDLING MIDDLEWARE
 // ============================================================================
 
-// Enhanced 404 handler with detailed route information
-app.use('*', (req, res) => {
-  console.log(`404 - Route not found: ${req.method} ${req.originalUrl}`);
-  
-  res.status(404).json({
-    success: false,
-    message: `Route ${req.method} ${req.originalUrl} not found`,
-    timestamp: new Date().toISOString(),
-    requestId: req.id,
-    availableRoutes: {
-      auth: [
-        'POST /api/auth/signup',
-        'POST /api/auth/login',
-        'POST /api/auth/logout',
-        'GET /api/auth/profile'
-      ],
-      admin: [
-        'GET /api/admin/dashboard',
-        'GET /api/admin/dashboard-overview',
-        'GET /api/admin/users',
-        'POST /api/admin/approve-user/:userId',
-        'POST /api/admin/reject-user/:userId',
-        'GET /api/admin/feedback',
-        'PATCH /api/admin/feedback/:id/respond'
-      ],
-      bills: [
-        'GET /api/bills/admin',
-        'GET /api/bills/admin/:billId',
-        'POST /api/bills',
-        'PATCH /api/bills/:billId/payment',
-        'GET /api/bills/stats/overview'
-      ],
-      client: [
-        'GET /api/client/bills/:clientId',
-        'GET /api/client/bill/:billId',
-        'POST /api/client/feedback',
-        'GET /api/client/feedback/:clientId'
-      ],
-      feedback: [
-        'GET /api/feedback',
-        'POST /api/feedback',
-        'GET /api/feedback/admin',
-        'PATCH /api/feedback/:id/respond'
-      ],
-      health: [
-        'GET /health',
-        'GET /api/health',
-        'GET /api/health/detailed'
-      ]
-    }
-  });
-});
-
-// Enhanced error handling middleware
+// Global error handler
 app.use((error, req, res, next) => {
-  console.error(`Error in request ${req.id}:`, error);
-
-  // Multer errors
-  if (error instanceof multer.MulterError) {
-    const multerErrors = {
-      'LIMIT_FILE_SIZE': 'File too large. Maximum size is 50MB.',
-      'LIMIT_FILE_COUNT': 'Too many files. Maximum 10 files allowed.',
-      'LIMIT_UNEXPECTED_FILE': 'Unexpected file field.'
-    };
-
-    return res.status(400).json({
-      success: false,
-      message: multerErrors[error.code] || 'File upload error',
-      code: error.code,
-      requestId: req.id
-    });
-  }
-
-  // JSON parsing errors
-  if (error.type === 'entity.parse.failed') {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid JSON in request body',
-      requestId: req.id
-    });
-  }
-
-  // Database errors
-  if (error.name === 'SequelizeValidationError') {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation error',
-      errors: error.errors.map(e => e.message),
-      requestId: req.id
-    });
-  }
-
-  // Default error
-  const statusCode = error.statusCode || error.status || 500;
-  const message = NODE_ENV === 'production' && statusCode === 500 
+  console.error('🔥 Global error handler:', error);
+  
+  const statusCode = error.status || error.statusCode || 500;
+  const message = NODE_ENV === 'production' 
     ? 'Internal server error' 
     : error.message;
 
@@ -399,22 +371,19 @@ app.use((error, req, res, next) => {
 });
 
 // ============================================================================
-// GRACEFUL SHUTDOWN HANDLING
+// GRACEFUL SHUTDOWN
 // ============================================================================
 
 function setupGracefulShutdown(server) {
   const shutdown = async (signal) => {
     console.log(`\n🔄 Received ${signal}. Starting graceful shutdown...`);
     
-    // Stop accepting new requests
     server.close(async () => {
       console.log('📡 HTTP server closed');
       
       try {
-        // Close database connection
         await sequelize.close();
         console.log('🗄️  Database connection closed');
-        
         console.log('✅ Graceful shutdown complete');
         process.exit(0);
       } catch (error) {
@@ -447,8 +416,58 @@ async function startServer() {
     // Initialize database
     await initializeDatabase();
 
-    // Mount routes
+    // Mount routes FIRST
     await mountRoutes();
+
+    // CRITICAL: 404 handler MUST be registered AFTER all routes
+    app.use('*', (req, res) => {
+      console.log(`404 - Route not found: ${req.method} ${req.originalUrl}`);
+      
+      res.status(404).json({
+        success: false,
+        message: `Route ${req.method} ${req.originalUrl} not found`,
+        timestamp: new Date().toISOString(),
+        requestId: req.id,
+        availableRoutes: {
+          auth: [
+            'POST /api/auth/signup',
+            'POST /api/auth/login',
+            'POST /api/auth/logout',
+            'GET /api/auth/profile'
+          ],
+          admin: [
+            'GET /api/admin/dashboard',
+            'GET /api/admin/dashboard-overview',
+            'GET /api/admin/users',
+            'POST /api/admin/approve-user/:userId',
+            'POST /api/admin/reject-user/:userId'
+          ],
+          bills: [
+            'GET /api/bills/admin',
+            'POST /api/bills',
+            'PATCH /api/bills/:billId/payment',
+            'GET /api/bills/stats/overview'
+          ],
+          client: [
+            'GET /api/client/bills/:clientId',
+            'GET /api/client/bill/:billId',
+            'POST /api/client/feedback',
+            'GET /api/client/feedback/:clientId'
+          ],
+          feedback: [
+            'GET /api/feedback',
+            'POST /api/feedback',
+            'GET /api/feedback/admin',
+            'PATCH /api/feedback/:id/respond'
+          ],
+          health: [
+            'GET /health',
+            'GET /api/health',
+            'GET /api/health/detailed'
+          ]
+        }
+      });
+    });
 
     // Start HTTP server
     const server = app.listen(PORT, '0.0.0.0', () => {
