@@ -1,5 +1,6 @@
+// backend/Database/models/signup.js
 const { DataTypes } = require("sequelize");
-const sequelize = require('../Database/DB'); // Adjust path if needed
+const sequelize = require('../Database/DB');
 
 const SignUp = sequelize.define("SignUp", {
   id: {
@@ -24,11 +25,21 @@ const SignUp = sequelize.define("SignUp", {
     allowNull: false,
   },
   type: {
-    type: DataTypes.ENUM('Client', 'dealer', 'field_employee', 'office_employee'),
+    // UPDATED: Added 'Admin' and other missing types
+    type: DataTypes.ENUM(
+      'Client', 
+      'dealer', 
+      'field_employee', 
+      'office_employee', 
+      'sales_purchase',
+      'Admin',           // ← Added Admin
+      'Administrator',   // ← Alternative admin
+      'Manager'          // ← Additional management role
+    ),
     allowNull: false,
   },
   user_id: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.STRING,  // Changed from INTEGER to STRING to match auth.js
     allowNull: false,
     unique: true
   },
@@ -37,15 +48,13 @@ const SignUp = sequelize.define("SignUp", {
     defaultValue: false,
   },
   approvedBy: {
-    type: DataTypes.INTEGER, // Admin ID if needed
+    type: DataTypes.INTEGER,
     allowNull: true,
   },
   status: {
     type: DataTypes.STRING,
-    defaultValue: 'pending', // 'pending', 'approved', 'rejected'
+    defaultValue: 'pending',
   },
-
-  // ========== ENHANCED FIELDS ==========
   department: {
     type: DataTypes.STRING,
     allowNull: true,
@@ -78,49 +87,34 @@ const SignUp = sequelize.define("SignUp", {
     type: DataTypes.TEXT,
     allowNull: true,
   },
-  lastLoginAt: {
+  lastLogin: {  // Renamed from lastLoginAt to match auth.js
     type: DataTypes.DATE,
     allowNull: true,
   },
   rating: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    validate: {
-      min: 1,
-      max: 5
-    }
+    validate: { min: 1, max: 5 }
   },
   serviceQuality: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    validate: {
-      min: 1,
-      max: 5
-    }
+    validate: { min: 1, max: 5 }
   },
   deliveryTime: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    validate: {
-      min: 1,
-      max: 5
-    }
+    validate: { min: 1, max: 5 }
   },
   productQuality: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    validate: {
-      min: 1,
-      max: 5
-    }
+    validate: { min: 1, max: 5 }
   },
   overallSatisfaction: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    validate: {
-      min: 1,
-      max: 5
-    }
+    validate: { min: 1, max: 5 }
   },
   recommendations: {
     type: DataTypes.TEXT,
@@ -130,10 +124,9 @@ const SignUp = sequelize.define("SignUp", {
     type: DataTypes.INTEGER,
     allowNull: true,
   }
-
 }, {
   tableName: "SignUp",
-  timestamps: false,
+  timestamps: true,  // Changed to true to add createdAt/updatedAt
 });
 
 module.exports = SignUp;

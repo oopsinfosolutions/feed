@@ -1,178 +1,197 @@
+// File: backend/Database/routes/admin.js (Enhanced)
+
 const express = require('express');
-const { Op } = require('sequelize');
-const Bill = require('../models/bill');
-const Material = require('../models/shipmentorder');
-const SignUp = require('../models/signup');
 const router = express.Router();
+const { Op } = require('sequelize');
+const SignUp = require('../models/signup');
+const Material = require('../models/shipmentorder');
+const Bill = require('../models/bill');
 
-// =================================================================
-// CLIENT BILL MANAGEMENT ROUTES
-// =================================================================
+// ============================================================================
+// ENHANCED ADMIN DASHBOARD ROUTES
+// ============================================================================
 
-// Get client bills with enhanced filtering
-router.get('/bills/:clientId', async (req, res) => {
+// GET: Enhanced dashboard overview with comprehensive statistics
+router.get('/dashboard-overview', async (req, res) => {
   try {
-    const { clientId } = req.params;
-    const {
-      status,
-      sortBy = 'createdAt',
-      sortOrder = 'DESC',
-      page = 1,
-      limit = 50,
-      search
-    } = req.query;
+    console.log('Fetching comprehensive admin dashboard overview...');
 
-    console.log(`Fetching bills for client: ${clientId}`);
-
-    // Verify client exists
-    const client = await SignUp.findOne({
-      where: {
-        [Op.or]: [
-          { id: clientId },
-          { user_id: clientId }
-        ]
-      }
-    });
-
-    if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
-    }
-
-    let whereClause = {
-      clientId: client.id // Use the actual database ID
-    };
-
-    // Filter by payment status
-    if (status && status !== 'all') {
-      whereClause.paymentStatus = status;
-    }
-
-    // Search functionality
-    if (search) {
-      whereClause[Op.or] = [
-        { billNumber: { [Op.like]: `%${search}%` } },
-        { materialName: { [Op.like]: `%${search}%` } }
-      ];
-    }
-
-    const offset = (page - 1) * limit;
-
-    const { count, rows: bills } = await Bill.findAndCountAll({
-      where: whereClause,
-      include: [
-        {
-          model: Material,
-          as: 'Order',
-          attributes: ['id', 'name', 'status'],
-          required: false
-        }
-      ],
-      order: [[sortBy, sortOrder]],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
-    });
-
-    // Calculate statistics
-    const stats = {
-      total: count,
-      pending: bills.filter(bill => bill.paymentStatus === 'pending').length,
-      successful: bills.filter(bill => bill.paymentStatus === 'successful').length,
-      totalAmount: bills.reduce((sum, bill) => sum + parseFloat(bill.totalAmount || 0), 0),
-      pendingAmount: bills
-        .filter(bill => bill.paymentStatus === 'pending')
-        .reduce((sum, bill) => sum + parseFloat(bill.totalAmount || 0), 0)
-    };
-
-    console.log(`Found ${count} bills for client ${clientId}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Bills fetched successfully',
-      data: {
-        bills,
-        stats,
-        pagination: {
-          total: count,
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(count / limit),
-          hasNext: offset + bills.length < count,
-          hasPrev: page > 1
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching client bills:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// Get single bill details for client
-router.get('/bill/:billId', async (req, res) => {
-  try {
-    const { billId } = req.params;
-    const { clientId } = req.query;
-
-    console.log(`Fetching bill details: ${billId} for client: ${clientId}`);
-
-    let whereClause = { id: billId };
-
-    // If clientId is provided, verify ownership
-    if (clientId) {
-      const client = await SignUp.findOne({
-        where: {
-          [Op.or]: [
-            { id: clientId },
-            { user_id: clientId }
-          ]
-        }
-      });
-
-      if (client) {
-        whereClause.clientId = client.id;
-      }
-    }
-
-    const bill = await Bill.findOne({
-      where: whereClause,
-      include: [
-        {
+    // Parallel data fetching for better performance
+    const [
+      totalUsers,
+      pendingUsers,
+      approvedUsers,
+      rejectedUsers,
+      totalOrders,
+      pendingOrders,
+      completedOrders,
+      totalBills,
+      pendingBills,
+      paidBills,
+      totalRevenue,
+      pendingRevenue,
+      recentUsers,
+      recentOrders,
+      recentBills,
+      recentActivities,
+      feedbackStats
+    ] = await Promise.all([
+      // User statistics
+      SignUp.count(),
+      SignUp.count({ where: { status: 'pending' } }),
+      SignUp.count({ where: { status: 'approved' } }),
+      SignUp.count({ where: { status: 'rejected' } }),
+      
+      // Order statistics
+      Material.count({ where: { role: { [Op.ne]: 'feedback' } } }),
+      Material.count({ where: { status: 'pending', role: { [Op.ne]: 'feedback' } } }),
+      Material.count({ where: { status: 'completed', role: { [Op.ne]: 'feedback' } } }),
+      
+      // Bill statistics
+      Bill.count(),
+      Bill.count({ where: { paymentStatus: 'pending' } }),
+      Bill.count({ where: { paymentStatus: 'successful' } }),
+      Bill.sum('totalAmount', { where: { paymentStatus: 'successful' } }),
+      Bill.sum('totalAmount', { where: { paymentStatus: 'pending' } }),
+      
+      // Recent data
+      SignUp.findAll({
+        limit: 5,
+        order: [['createdAt', 'DESC']],
+        attributes: ['id', 'fullname', 'email', 'type', 'status', 'createdAt']
+      }),
+      Material.findAll({
+        limit: 5,
+        where: { role: { [Op.ne]: 'feedback' } },
+        order: [['createdAt', 'DESC']],
+        attributes: ['id', 'name', 'status', 'createdAt', 'c_id'],
+        include: [{
           model: SignUp,
           as: 'Client',
-          attributes: ['id', 'fullname', 'email', 'phone']
-        },
+          attributes: ['fullname']
+        }]
+      }),
+      Bill.findAll({
+        limit: 5,
+        order: [['createdAt', 'DESC']],
+        include: [{
+          model: SignUp,
+          as: 'Client',
+          attributes: ['fullname']
+        }]
+      }),
+      
+      // Recent activities (mock data - implement based on your activity logging)
+      Promise.resolve([
         {
-          model: Material,
-          as: 'Order',
-          attributes: ['id', 'name', 'status', 'image1', 'image2', 'image3']
+          id: 1,
+          type: 'user_approval',
+          description: 'New user approved',
+          timestamp: new Date(),
+          severity: 'info'
         }
-      ]
-    });
+      ]),
+      
+      // Feedback statistics
+      Material.count({ where: { role: 'feedback' } })
+    ]);
 
-    if (!bill) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bill not found or access denied'
+    // Calculate growth rates (you can enhance this with historical data)
+    const userGrowthRate = pendingUsers > 0 ? ((pendingUsers / Math.max(totalUsers - pendingUsers, 1)) * 100).toFixed(1) : 0;
+    const revenueGrowthRate = '12.5'; // Mock data - implement with historical comparison
+
+    // System alerts
+    const alerts = [];
+    
+    if (pendingUsers > 10) {
+      alerts.push({
+        type: 'warning',
+        title: 'High Pending Approvals',
+        message: `${pendingUsers} users waiting for approval`,
+        action: 'users',
+        priority: 'high'
+      });
+    }
+    
+    if (pendingBills > 20) {
+      alerts.push({
+        type: 'info',
+        title: 'Pending Payments',
+        message: `${pendingBills} bills awaiting payment`,
+        action: 'bills',
+        priority: 'medium'
+      });
+    }
+    
+    if (feedbackStats > 0) {
+      alerts.push({
+        type: 'info',
+        title: 'New Feedback',
+        message: `${feedbackStats} feedback(s) received`,
+        action: 'feedback',
+        priority: 'low'
       });
     }
 
-    console.log(`Bill details found: ${bill.billNumber}`);
+    const dashboardData = {
+      // Key metrics
+      keyMetrics: {
+        totalUsers: totalUsers || 0,
+        totalOrders: totalOrders || 0,
+        totalRevenue: totalRevenue || 0,
+        activeUsers: approvedUsers || 0
+      },
+      
+      // User statistics
+      userStats: {
+        total: totalUsers || 0,
+        pending: pendingUsers || 0,
+        approved: approvedUsers || 0,
+        rejected: rejectedUsers || 0,
+        growthRate: userGrowthRate
+      },
+      
+      // Order statistics
+      orderStats: {
+        total: totalOrders || 0,
+        pending: pendingOrders || 0,
+        completed: completedOrders || 0,
+        inProgress: Math.max((totalOrders || 0) - (pendingOrders || 0) - (completedOrders || 0), 0)
+      },
+      
+      // Financial statistics
+      financialStats: {
+        totalRevenue: totalRevenue || 0,
+        pendingRevenue: pendingRevenue || 0,
+        totalBills: totalBills || 0,
+        paidBills: paidBills || 0,
+        pendingBills: pendingBills || 0,
+        revenueGrowthRate: revenueGrowthRate
+      },
+      
+      // Recent data
+      recentUsers: recentUsers || [],
+      recentOrders: recentOrders || [],
+      recentBills: recentBills || [],
+      recentActivities: recentActivities || [],
+      
+      // System information
+      systemInfo: {
+        alerts: alerts,
+        lastUpdated: new Date().toISOString(),
+        serverStatus: 'healthy',
+        databaseStatus: 'connected'
+      }
+    };
 
     res.status(200).json({
       success: true,
-      message: 'Bill details fetched successfully',
-      data: bill
+      message: 'Dashboard overview fetched successfully',
+      data: dashboardData
     });
 
   } catch (error) {
-    console.error('Error fetching bill details:', error);
+    console.error('Error fetching dashboard overview:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',
@@ -181,94 +200,106 @@ router.get('/bill/:billId', async (req, res) => {
   }
 });
 
-// =================================================================
-// CLIENT ORDER/MATERIAL MANAGEMENT ROUTES
-// =================================================================
-
-// Get client orders/materials
-router.get('/orders/:clientId', async (req, res) => {
+// GET: Enhanced user management with comprehensive filtering
+router.get('/users', async (req, res) => {
   try {
-    const { clientId } = req.params;
     const {
+      type,
       status,
       sortBy = 'createdAt',
       sortOrder = 'DESC',
       page = 1,
       limit = 50,
-      search
+      search,
+      dateFrom,
+      dateTo
     } = req.query;
 
-    console.log(`Fetching orders for client: ${clientId}`);
+    let whereClause = {};
 
-    // Verify client exists
-    const client = await SignUp.findOne({
-      where: {
-        [Op.or]: [
-          { id: clientId },
-          { user_id: clientId }
-        ]
-      }
-    });
-
-    if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+    // Filter by user type
+    if (type && type !== 'all') {
+      whereClause.type = type;
     }
-
-    let whereClause = {
-      c_id: client.id // Use the actual database ID
-    };
 
     // Filter by status
     if (status && status !== 'all') {
       whereClause.status = status;
     }
 
+    // Date range filter
+    if (dateFrom && dateTo) {
+      whereClause.createdAt = {
+        [Op.between]: [new Date(dateFrom), new Date(dateTo)]
+      };
+    }
+
     // Search functionality
     if (search) {
       whereClause[Op.or] = [
-        { name: { [Op.like]: `%${search}%` } },
-        { detail: { [Op.like]: `%${search}%` } }
+        { fullname: { [Op.iLike]: `%${search}%` } },
+        { email: { [Op.iLike]: `%${search}%` } },
+        { phone: { [Op.iLike]: `%${search}%` } },
+        { user_id: { [Op.iLike]: `%${search}%` } }
       ];
     }
 
     const offset = (page - 1) * limit;
 
-    const { count, rows: orders } = await Material.findAndCountAll({
+    const { count, rows: users } = await SignUp.findAndCountAll({
       where: whereClause,
-      include: [
-        {
-          model: Bill,
-          as: 'Bill',
-          required: false
-        }
-      ],
       order: [[sortBy, sortOrder]],
       limit: parseInt(limit),
-      offset: parseInt(offset)
+      offset: parseInt(offset),
+      attributes: [
+        'id', 'fullname', 'email', 'phone', 'type', 'user_id',
+        'status', 'isApproved', 'department', 'employeeId',
+        'createdAt', 'updatedAt', 'approvedAt', 'rejectedAt',
+        'lastLogin', 'approvalNote', 'rejectionReason'
+      ]
     });
 
-    console.log(`Found ${count} orders for client ${clientId}`);
+    // Get user statistics by type
+    const userTypeStats = await SignUp.findAll({
+      attributes: [
+        'type',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+      ],
+      group: ['type'],
+      raw: true
+    });
+
+    // Get user statistics by status
+    const userStatusStats = await SignUp.findAll({
+      attributes: [
+        'status',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+      ],
+      group: ['status'],
+      raw: true
+    });
 
     res.status(200).json({
       success: true,
-      message: 'Orders fetched successfully',
+      message: 'Users fetched successfully',
       data: {
-        orders,
+        users,
+        statistics: {
+          byType: userTypeStats,
+          byStatus: userStatusStats
+        },
         pagination: {
           total: count,
           currentPage: parseInt(page),
           totalPages: Math.ceil(count / limit),
-          hasNext: offset + orders.length < count,
+          hasNext: offset + users.length < count,
           hasPrev: page > 1
         }
       }
     });
 
   } catch (error) {
-    console.error('Error fetching client orders:', error);
+    console.error('Error fetching users:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',
@@ -277,290 +308,208 @@ router.get('/orders/:clientId', async (req, res) => {
   }
 });
 
-// =================================================================
-// CLIENT PROFILE MANAGEMENT
-// =================================================================
-
-// Get client profile
-router.get('/profile/:clientId', async (req, res) => {
+// Enhanced user approval with detailed logging
+router.post('/approve-user/:userId', async (req, res) => {
   try {
-    const { clientId } = req.params;
+    const { userId } = req.params;
+    const { adminId, approvalNote } = req.body;
 
-    console.log(`Fetching profile for client: ${clientId}`);
+    console.log(`Admin ${adminId} attempting to approve user: ${userId}`);
 
-    const client = await SignUp.findOne({
+    const user = await SignUp.findOne({
       where: {
         [Op.or]: [
-          { id: clientId },
-          { user_id: clientId }
+          { id: userId },
+          { user_id: userId }
         ]
-      },
-      attributes: [
-        'id', 'user_id', 'fullname', 'email', 'phone', 'type',
-        'status', 'isApproved', 'createdAt', 'updatedAt'
-      ]
+      }
     });
 
-    if (!client) {
+    if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'Client not found'
+        message: 'User not found'
       });
     }
 
-    // Get client statistics
-    const orderCount = await Material.count({
-      where: { c_id: client.id }
+    if (user.isApproved) {
+      return res.status(400).json({
+        success: false,
+        message: 'User is already approved'
+      });
+    }
+
+    const updatedUser = await user.update({
+      isApproved: true,
+      status: 'approved',
+      approvedBy: adminId || 'admin',
+      approvedAt: new Date(),
+      approvalNote: approvalNote || 'Approved by admin'
     });
 
-    const billCount = await Bill.count({
-      where: { clientId: client.id }
+    console.log(`User approved successfully: ${user.fullname} (${user.email})`);
+
+    res.status(200).json({
+      success: true,
+      message: 'User approved successfully',
+      data: {
+        user: updatedUser,
+        approvalDetails: {
+          approvedBy: adminId || 'admin',
+          approvedAt: new Date(),
+          note: approvalNote || 'Approved by admin'
+        }
+      }
     });
 
-    const pendingBills = await Bill.count({
+  } catch (error) {
+    console.error('Error approving user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Enhanced user rejection
+router.post('/reject-user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { adminId, rejectionReason } = req.body;
+
+    if (!rejectionReason || rejectionReason.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Rejection reason is required'
+      });
+    }
+
+    const user = await SignUp.findOne({
       where: {
-        clientId: client.id,
-        paymentStatus: 'pending'
+        [Op.or]: [
+          { id: userId },
+          { user_id: userId }
+        ]
       }
     });
 
-    const totalAmount = await Bill.sum('totalAmount', {
-      where: { clientId: client.id }
-    }) || 0;
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
 
-    const pendingAmount = await Bill.sum('totalAmount', {
-      where: {
-        clientId: client.id,
-        paymentStatus: 'pending'
-      }
-    }) || 0;
+    if (user.isApproved) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot reject an already approved user'
+      });
+    }
 
-    const profileData = {
-      ...client.toJSON(),
-      statistics: {
-        totalOrders: orderCount,
-        totalBills: billCount,
-        pendingBills,
-        totalAmount: parseFloat(totalAmount),
-        pendingAmount: parseFloat(pendingAmount)
+    const updatedUser = await user.update({
+      status: 'rejected',
+      rejectedBy: adminId || 'admin',
+      rejectedAt: new Date(),
+      rejectionReason: rejectionReason.trim()
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'User rejected successfully',
+      data: {
+        user: updatedUser,
+        rejectionDetails: {
+          rejectedBy: adminId || 'admin',
+          rejectedAt: new Date(),
+          reason: rejectionReason.trim()
+        }
       }
+    });
+
+  } catch (error) {
+    console.error('Error rejecting user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// ============================================================================
+// ENHANCED FEEDBACK MANAGEMENT ROUTES
+// ============================================================================
+
+// GET: Admin feedback with comprehensive filtering and statistics
+router.get('/feedback', async (req, res) => {
+  try { 
+    const {
+      status,
+      rating,
+      clientId,
+      sortBy = 'createdAt',
+      sortOrder = 'DESC',
+      page = 1,
+      limit = 50,
+      search,
+      dateFrom,
+      dateTo
+    } = req.query;
+
+    let whereClause = {
+      role: 'feedback'
     };
 
-    console.log(`Profile found for client: ${client.fullname}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Profile fetched successfully',
-      data: profileData
-    });
-
-  } catch (error) {
-    console.error('Error fetching client profile:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// Update client profile
-router.patch('/profile/:clientId', async (req, res) => {
-  try {
-    const { clientId } = req.params;
-    const { fullname, email, phone } = req.body;
-
-    console.log(`Updating profile for client: ${clientId}`);
-
-    const client = await SignUp.findOne({
-      where: {
-        [Op.or]: [
-          { id: clientId },
-          { user_id: clientId }
-        ]
-      }
-    });
-
-    if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+    // Apply filters
+    if (status && status !== 'all') {
+      whereClause.status = status;
     }
 
-    // Check if email is already taken by another user
-    if (email && email !== client.email) {
-      const existingUser = await SignUp.findOne({
-        where: {
-          email,
-          id: { [Op.ne]: client.id }
-        }
-      });
-
-      if (existingUser) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email is already registered'
-        });
-      }
+    if (rating && rating !== 'all') {
+      whereClause.rating = parseInt(rating);
     }
 
-    // Update client information
-    const updateData = {};
-    if (fullname) updateData.fullname = fullname.trim();
-    if (email) updateData.email = email.toLowerCase().trim();
-    if (phone) updateData.phone = phone.replace(/\D/g, '');
-    updateData.updatedAt = new Date();
-
-    await client.update(updateData);
-
-    console.log(`Profile updated for client: ${client.fullname}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Profile updated successfully',
-      data: client
-    });
-
-  } catch (error) {
-    console.error('Error updating client profile:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// =================================================================
-// CLIENT FEEDBACK ROUTES
-// =================================================================
-
-// Submit feedback
-router.post('/feedback', async (req, res) => {
-  try {
-    const {
-      clientId, billId, orderId, rating, feedbackText,
-      serviceQuality, deliveryTime, productQuality,
-      overallSatisfaction, recommendations
-    } = req.body;
-
-    console.log(`Submitting feedback from client: ${clientId}`);
-
-    // Validate required fields
-    if (!clientId || !rating || !feedbackText) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID, rating, and feedback text are required'
-      });
+    if (clientId) {
+      whereClause.c_id = clientId;
     }
 
-    // Validate rating range
-    if (rating < 1 || rating > 5) {
-      return res.status(400).json({
-        success: false,
-        message: 'Rating must be between 1 and 5'
-      });
+    // Date range filter
+    if (dateFrom && dateTo) {
+      whereClause.createdAt = {
+        [Op.between]: [new Date(dateFrom), new Date(dateTo)]
+      };
     }
 
-    // Verify client exists
-    const client = await SignUp.findOne({
-      where: {
-        [Op.or]: [
-          { id: clientId },
-          { user_id: clientId }
-        ]
-      }
-    });
-
-    if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
-    }
-
-    // Create feedback record in Material table (as per existing structure)
-    const feedback = await Material.create({
-      userId: `FEEDBACK_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      c_id: client.id,
-      orderId: orderId || null,
-      role: 'feedback',
-      name: 'Client Feedback',
-      detail: feedbackText.trim(),
-      rating: parseInt(rating),
-      serviceQuality: serviceQuality || null,
-      deliveryTime: deliveryTime || null,
-      productQuality: productQuality || null,
-      overallSatisfaction: overallSatisfaction || null,
-      recommendations: recommendations ? recommendations.trim() : null,
-      billId: billId || null,
-      status: 'submitted',
-      productType: 'feedback',
-      createdAt: new Date(),
-      updatedAt: new Date()
-    });
-
-    console.log(`Feedback submitted successfully: ${feedback.id}`);
-
-    res.status(201).json({
-      success: true,
-      message: 'Feedback submitted successfully',
-      data: feedback
-    });
-
-  } catch (error) {
-    console.error('Error submitting feedback:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
-
-// Get client feedback history
-router.get('/feedback/:clientId', async (req, res) => {
-  try {
-    const { clientId } = req.params;
-    const { page = 1, limit = 20 } = req.query;
-
-    console.log(`Fetching feedback history for client: ${clientId}`);
-
-    // Verify client exists
-    const client = await SignUp.findOne({
-      where: {
-        [Op.or]: [
-          { id: clientId },
-          { user_id: clientId }
-        ]
-      }
-    });
-
-    if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
-    }
+    // Search functionality
+    if (search) {
+  whereClause[Op.or] = [
+    { detail: { [Op.iLike]: `%${search}%` } },
+    { recommendations: { [Op.iLike]: `%${search}%` } },
+    { '$client.fullname$': { [Op.iLike]: `%${search}%` } },
+    { '$client.email$': { [Op.iLike]: `%${search}%` } }
+  ];
+}
 
     const offset = (page - 1) * limit;
 
     const { count, rows: feedback } = await Material.findAndCountAll({
-      where: {
-        c_id: client.id,
-        role: 'feedback'
-      },
-      order: [['createdAt', 'DESC']],
+      where: whereClause,
+      include: [{
+        model: SignUp,
+        as: 'Client',
+        attributes: ['id', 'user_id', 'fullname', 'email', 'phone'],
+        required: false
+      }],
+      order: [[sortBy, sortOrder]],
       limit: parseInt(limit),
       offset: parseInt(offset)
     });
 
-    console.log(`Found ${count} feedback records for client ${clientId}`);
-
     res.status(200).json({
       success: true,
-      message: 'Feedback history fetched successfully',
+      message: 'Feedback fetched successfully',
       data: {
         feedback,
         pagination: {
@@ -574,7 +523,125 @@ router.get('/feedback/:clientId', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching feedback history:', error);
+    console.error('Error fetching admin feedback:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// GET: Feedback statistics for admin dashboard
+router.get('/feedback/stats', async (req, res) => {
+  try {
+    const [
+      totalFeedback,
+      pendingFeedback,
+      reviewedFeedback,
+      resolvedFeedback,
+      averageRating,
+      ratingDistribution,
+      recentFeedback
+    ] = await Promise.all([
+      Material.count({ where: { role: 'feedback' } }),
+      Material.count({ where: { role: 'feedback', status: 'submitted' } }),
+      Material.count({ where: { role: 'feedback', status: 'reviewed' } }),
+      Material.count({ where: { role: 'feedback', status: 'resolved' } }),
+      
+      Material.findOne({
+        attributes: [[sequelize.fn('AVG', sequelize.col('rating')), 'avgRating']],
+        where: { role: 'feedback', rating: { [Op.ne]: null } },
+        raw: true
+      }),
+      
+      Material.findAll({
+        attributes: [
+          'rating',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: { role: 'feedback', rating: { [Op.ne]: null } },
+        group: ['rating'],
+        order: [['rating', 'ASC']],
+        raw: true
+      }),
+      
+      Material.count({
+        where: {
+          role: 'feedback',
+          createdAt: {
+            [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Last 7 days
+          }
+        }
+      })
+    ]);
+
+    res.status(200).json({
+      success: true,
+      message: 'Feedback statistics fetched successfully',
+      data: {
+        total: totalFeedback || 0,
+        pending: pendingFeedback || 0,
+        reviewed: reviewedFeedback || 0,
+        resolved: resolvedFeedback || 0,
+        recent: recentFeedback || 0,
+        averageRating: parseFloat(averageRating?.avgRating || 0).toFixed(1),
+        ratingDistribution: ratingDistribution || []
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching feedback statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// PATCH: Respond to feedback
+router.patch('/feedback/:feedbackId/respond', async (req, res) => {
+  try {
+    const { feedbackId } = req.params;
+    const { adminResponse, status, respondedBy } = req.body;
+
+    if (!adminResponse || adminResponse.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Admin response is required'
+      });
+    }
+
+    const feedback = await Material.findOne({
+      where: {
+        id: feedbackId,
+        role: 'feedback'
+      }
+    });
+
+    if (!feedback) {
+      return res.status(404).json({
+        success: false,
+        message: 'Feedback not found'
+      });
+    }
+
+    const updatedFeedback = await feedback.update({
+      adminResponse: adminResponse.trim(),
+      status: status || 'reviewed',
+      respondedBy: respondedBy || 'admin',
+      respondedAt: new Date()
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Response submitted successfully',
+      data: updatedFeedback
+    });
+
+  } catch (error) {
+    console.error('Error responding to feedback:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',

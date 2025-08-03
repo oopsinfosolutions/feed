@@ -1,3 +1,5 @@
+// backend/Database/server.js
+
 const express = require("express");
 const cors = require("cors");
 const multer = require('multer');
@@ -11,14 +13,14 @@ const path = require("path");
 const fs = require('fs');
 require("dotenv").config();
 
-// Import models FIRST before routes
+// Import models FIRST
 const SignUp = require('./models/signup');
 const Material = require('./models/shipmentorder');
 const Bill = require('./models/bill');
 const SalesOrder = require('./models/SalesOrder');
 const Customer = require('./models/Customer');
 
-// Import route handlers AFTER models
+// Import route handlers
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const materialRoutes = require('./routes/materials');
@@ -32,258 +34,166 @@ const clientRoutes = require('./routes/client');
 const utilsRoutes = require('./routes/utils');
 
 const app = express();
+app.use((req, res, next) => {
+  console.log(`📥 Incoming Request: ${req.method} ${req.originalUrl}`);
+  next();
+});
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-// =================================================================
-// PRODUCTION SECURITY MIDDLEWARE
-// =================================================================
+// ============================================================================
+// PRODUCTION SECURITY & PERFORMANCE MIDDLEWARE
+// ============================================================================
+console.log('🔎 typeof authRoutes:', typeof authRoutes); // Should be 'function'
+console.log('🔎 authRoutes keys:', Object.keys(authRoutes)); // Should include 'verifyToken'
 
-// Security headers
+// Security headers with enhanced configuration
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "blob:"],
+      imgSrc: ["'self'", "data:", "blob:", "https:"],
       connectSrc: ["'self'"],
+      fontSrc: ["'self'", "https:", "data:"],
     },
   },
   crossOriginEmbedderPolicy: false,
 }));
 
+// Enhanced CORS configuration
+app.use(cors({
+  origin: NODE_ENV === 'production' 
+    ? ['http://localhost:8081', 'http://192.168.29.161:8081'] // Add your production URLs
+    : true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+}));
+
 // Compression middleware
 app.use(compression());
 
-// Request logging
+// Enhanced request logging
 if (NODE_ENV === 'production') {
   app.use(morgan('combined'));
 } else {
   app.use(morgan('dev'));
 }
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: NODE_ENV === 'production' ? 100 : 1000, // limit each IP to 100 requests per windowMs in production
-  message: {
-    success: false,
-    message: 'Too many requests from this IP, please try again later.'
-  },
+// Enhanced rate limiting with different limits for different endpoints
+const createRateLimit = (windowMs, max, message) => rateLimit({
+  windowMs,
+  max,
+  message: { success: false, message },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-app.use('/api/', limiter);
+// General rate limit
+app.use('/api/', createRateLimit(
+  15 * 60 * 1000, // 15 minutes
+  NODE_ENV === 'production' ? 100 : 1000,
+  'Too many requests, please try again later.'
+));
 
-// =================================================================
-// CORS CONFIGURATION
-// =================================================================
+// Stricter rate limit for auth endpoints
+app.use('/api/auth/', createRateLimit(
+  15 * 60 * 1000, // 15 minutes
+  NODE_ENV === 'production' ? 20 : 100,
+  'Too many authentication attempts, please try again later.'
+));
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://127.0.0.1:3000',
-      'http://192.168.29.161:3000',
-      'http://192.168.29.161:3001',
-      // Add your production domains here
-      process.env.FRONTEND_URL
-    ].filter(Boolean);
-
-    if (NODE_ENV === 'development') {
-      return callback(null, true); // Allow all origins in development
-    }
-
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  optionsSuccessStatus: 200
-};
-
-app.use(cors(corsOptions));
-
-// =================================================================
-// BODY PARSING MIDDLEWARE
-// =================================================================
-
+// Body parsing middleware with enhanced limits
 app.use(express.json({ 
   limit: '50mb',
-  type: 'application/json'
+  verify: (req, res, buf) => {
+    try {
+      JSON.parse(buf);
+    } catch (e) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid JSON in request body'
+      });
+      throw new Error('Invalid JSON');
+    }
+  }
 }));
 
 app.use(express.urlencoded({ 
   extended: true, 
-  limit: '50mb',
-  parameterLimit: 50000
+  limit: '50mb' 
 }));
 
-// =================================================================
-// MULTER CONFIGURATION FOR FILE UPLOADS
-// =================================================================
+// Static file serving
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+// Request ID middleware for tracking
+app.use((req, res, next) => {
+  req.id = Math.random().toString(36).substr(2, 9);
+  res.setHeader('X-Request-ID', req.id);
+  next();
+});
+
+// ============================================================================
+// DATABASE CONNECTION & ASSOCIATIONS
+// ============================================================================
+
+async function initializeDatabase() {
+  try {
+    console.log('🔄 Connecting to database...');
+    await sequelize.authenticate();
+    console.log('✅ Database connected successfully');
+
+    // Setup associations
+    await setupDatabaseAssociations();
+
+    // Sync database with enhanced options
+    if (NODE_ENV === 'development') {
+      await sequelize.sync({ alter: true });
+      console.log('✅ Database synchronized');
+    } else {
+      await sequelize.sync();
+      console.log('✅ Database sync completed');
+    }
+
+  } catch (error) {
+    console.error('❌ Database initialization failed:', error);
+    process.exit(1);
+  }
 }
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir);
-  },
-  filename: function (req, file, cb) {
-    // Generate unique filename with timestamp
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
-  }
-});
-
-// File filter for security
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = [
-    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-    'video/mp4', 'video/avi', 'video/mov', 'video/wmv',
-    'application/pdf', 'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-  ];
-
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error(`File type ${file.mimetype} not allowed`), false);
-  }
-};
-
-const upload = multer({
-  storage: storage,
-  fileFilter: fileFilter,
-  limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
-    files: 10 // Maximum 10 files per request
-  }
-});
-
-// Global upload middleware for routes that need it
-app.use('/api/materials/submit', upload.fields([
-  { name: 'image1', maxCount: 1 },
-  { name: 'image2', maxCount: 1 },
-  { name: 'image3', maxCount: 1 },
-  { name: 'video1', maxCount: 1 },
-  { name: 'video2', maxCount: 1 },
-  { name: 'video3', maxCount: 1 }
-]));
-
-app.use('/api/orders/admin', upload.fields([
-  { name: 'image1', maxCount: 1 },
-  { name: 'video1', maxCount: 1 }
-]));
-
-// =================================================================
-// STATIC FILE SERVING
-// =================================================================
-
-app.use('/uploads', express.static(uploadsDir, {
-  maxAge: '1d',
-  etag: true,
-  lastModified: true
-}));
-
-// =================================================================
-// SECURITY HEADERS MIDDLEWARE
-// =================================================================
-
-app.use((req, res, next) => {
-  res.header('X-Content-Type-Options', 'nosniff');
-  res.header('X-Frame-Options', 'DENY');
-  res.header('X-XSS-Protection', '1; mode=block');
-  res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-  next();
-});
-
-// =================================================================
-// REQUEST LOGGING MIDDLEWARE
-// =================================================================
-
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - IP: ${req.ip}`);
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-  }
-  next();
-});
-
-// =================================================================
-// DATABASE ASSOCIATIONS & RELATIONSHIPS
-// =================================================================
 
 async function setupDatabaseAssociations() {
   try {
+    // Enhanced associations with proper foreign keys and aliases
+    
+    // SignUp associations
+    SignUp.hasMany(Material, { foreignKey: 'c_id', as: 'orders' });
+    SignUp.hasMany(Bill, { foreignKey: 'clientId', as: 'bills' });
+    SignUp.hasMany(SalesOrder, { foreignKey: 'createdBy', as: 'salesOrders' });
+
+    // Material associations
+    Material.belongsTo(SignUp, { foreignKey: 'c_id', as: 'Client' });
+    Material.hasMany(Bill, { foreignKey: 'orderId', as: 'bills' });
+
     // Bill associations
     Bill.belongsTo(SignUp, { foreignKey: 'clientId', as: 'Client' });
     Bill.belongsTo(Material, { foreignKey: 'orderId', as: 'Order' });
-    Bill.belongsTo(SignUp, { foreignKey: 'createdBy', as: 'Creator' });
 
-    SignUp.hasMany(Bill, { foreignKey: 'clientId', as: 'Bills' });
-    Material.hasOne(Bill, { foreignKey: 'orderId', as: 'Bill' });
+    // SalesOrder associations
+    SalesOrder.belongsTo(SignUp, { foreignKey: 'createdBy', as: 'user' });
 
-    // Material and SignUp associations
-    Material.belongsTo(SignUp, { foreignKey: 'c_id', as: 'Client' });
-    SignUp.hasMany(Material, { foreignKey: 'c_id', as: 'Materials' });
-
-    // Customer ↔ SalesOrder
-    Customer.hasMany(SalesOrder, {
-      foreignKey: 'customerId',
-      as: 'orders'
-    });
-    SalesOrder.belongsTo(Customer, {
-      foreignKey: 'customerId',
-      as: 'customer'
-    });
-
-    // SignUp ↔ Customer
-    SignUp.hasMany(Customer, {
-      foreignKey: 'createdBy',
-      as: 'customers'
-    });
-    Customer.belongsTo(SignUp, {
-      foreignKey: 'createdBy',
-      as: 'user'
-    });
-
-    // SignUp ↔ SalesOrder
-    SignUp.hasMany(SalesOrder, {
-      foreignKey: 'createdBy',
-      as: 'orders'
-    });
-    SalesOrder.belongsTo(SignUp, {
-      foreignKey: 'createdBy',
-      as: 'user'
-    });
-
-    console.log('Database associations set up successfully');
+    console.log('✅ Database associations configured');
   } catch (error) {
-    console.error('Error setting up database associations:', error);
+    console.error('❌ Error setting up associations:', error);
     throw error;
   }
 }
 
-// =================================================================
-// HEALTH CHECK ROUTES
-// =================================================================
+// ============================================================================
+// ENHANCED HEALTH CHECK ROUTES
+// ============================================================================
 
 app.get('/health', (req, res) => {
   res.status(200).json({
@@ -291,234 +201,290 @@ app.get('/health', (req, res) => {
     message: 'Server is running',
     timestamp: new Date().toISOString(),
     environment: NODE_ENV,
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    version: '2.0.0',
+    status: 'healthy'
   });
 });
 
-app.get('/api/health', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'API is healthy',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0'
-  });
-});
-
-// Database health check
-app.get('/api/health/database', async (req, res) => {
+app.get('/api/health', async (req, res) => {
   try {
+    // Test database connection
     await sequelize.authenticate();
+    
     res.status(200).json({
       success: true,
-      message: 'Database connection is healthy'
+      message: 'API is healthy',
+      timestamp: new Date().toISOString(),
+      version: '2.0.0',
+      database: 'connected',
+      environment: NODE_ENV
     });
   } catch (error) {
     res.status(503).json({
       success: false,
-      message: 'Database connection failed',
-      error: error.message
+      message: 'API health check failed',
+      error: error.message,
+      database: 'disconnected'
     });
   }
 });
 
-// =================================================================
-// ROUTE MOUNTING WITH ERROR HANDLING
-// =================================================================
+// Detailed health check
+app.get('/api/health/detailed', async (req, res) => {
+  const healthCheck = {
+    success: true,
+    timestamp: new Date().toISOString(),
+    environment: NODE_ENV,
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    database: 'unknown',
+    routes: 'loaded'
+  };
 
-try {
-  // API routes
-  app.use('/api/auth', authRoutes);
-  app.use('/api/users', userRoutes);
-  app.use('/api/materials', materialRoutes);
-  app.use('/api/orders', orderRoutes);
-  app.use('/api/bills', billRoutes);
-  app.use('/api/products', productRoutes);
-  app.use('/api/feedback', feedbackRoutes);
-  app.use('/api/sales', salesRoutes);
-  app.use('/api/admin', adminRoutes);
-  app.use('/api/client', clientRoutes);
-  app.use('/api/utils', utilsRoutes);
+  try {
+    await sequelize.authenticate();
+    healthCheck.database = 'connected';
+  } catch (error) {
+    healthCheck.success = false;
+    healthCheck.database = 'disconnected';
+    healthCheck.databaseError = error.message;
+  }
 
-  // Legacy routes for backward compatibility
-  app.use('/Users', userRoutes);
-  app.use('/signup', authRoutes);
-  app.use('/login', authRoutes);
-  app.use('/materials', materialRoutes);
+  res.status(healthCheck.success ? 200 : 503).json(healthCheck);
+});
 
-  console.log('✅ All routes mounted successfully');
-} catch (error) {
-  console.error('❌ Error mounting routes:', error);
-  process.exit(1);
+// ============================================================================
+// ENHANCED ROUTE MOUNTING WITH ERROR HANDLING
+// ============================================================================
+
+async function mountRoutes() {
+  try {
+    console.log('🔄 Mounting API routes...');
+
+    // Core API routes with enhanced error handling
+    app.use('/api/auth', authRoutes);
+    app.use('/api/users', userRoutes);
+    app.use('/api/materials', materialRoutes);
+    app.use('/api/orders', orderRoutes);
+    app.use('/api/bills', billRoutes);
+    app.use('/api/products', productRoutes);
+    app.use('/api/feedback', feedbackRoutes);
+    app.use('/api/sales', salesRoutes);
+    app.use('/api/admin', adminRoutes);
+    app.use('/api/client', clientRoutes);
+    app.use('/api/utils', utilsRoutes);
+
+    // Legacy routes for backward compatibility
+    app.use('/Users', userRoutes);
+    app.use('/signup', authRoutes);
+    app.use('/login', authRoutes);
+    app.use('/materials', materialRoutes);
+
+    console.log('✅ All routes mounted successfully');
+  } catch (error) {
+    console.error('❌ Error mounting routes:', error);
+    throw error;
+  }
 }
 
-// =================================================================
-// 404 HANDLER
-// =================================================================
+// ============================================================================
+// ENHANCED ERROR HANDLING & 404 ROUTES
+// ============================================================================
 
+// Enhanced 404 handler with detailed route information
 app.use('*', (req, res) => {
+  console.log(`404 - Route not found: ${req.method} ${req.originalUrl}`);
+  
   res.status(404).json({
     success: false,
     message: `Route ${req.method} ${req.originalUrl} not found`,
-    availableRoutes: [
-      'GET /health',
-      'GET /api/health',
-      'POST /api/auth/signup',
-      'POST /api/auth/login',
-      'GET /api/users',
-      'GET /api/materials/getdata',
-      'POST /api/materials/submit',
-      'GET /api/orders',
-      'POST /api/orders/admin',
-      'GET /api/bills',                    // ← ADD THIS
-      'GET /api/bills/client/:clientId',   // ← ADD THIS
-      'GET /api/bills/client/bill/:billId',// ← ADD THIS
-      'GET /api/client/bills/:clientId',   // ← ADD THIS
-      'GET /api/client/bill/:billId',      // ← ADD THIS
-      'POST /api/bills',                   // ← ADD THIS
-      'GET /api/products',                 // ← ADD THIS
-      'GET /api/feedback',
-      'GET /api/admin/dashboard',
-      'GET /api/sales',                    // ← ADD THIS
-      'GET /api/utils'                     // ← ADD THIS
-    ]
+    timestamp: new Date().toISOString(),
+    requestId: req.id,
+    availableRoutes: {
+      auth: [
+        'POST /api/auth/signup',
+        'POST /api/auth/login',
+        'POST /api/auth/logout',
+        'GET /api/auth/profile'
+      ],
+      admin: [
+        'GET /api/admin/dashboard',
+        'GET /api/admin/dashboard-overview',
+        'GET /api/admin/users',
+        'POST /api/admin/approve-user/:userId',
+        'POST /api/admin/reject-user/:userId',
+        'GET /api/admin/feedback',
+        'PATCH /api/admin/feedback/:id/respond'
+      ],
+      bills: [
+        'GET /api/bills/admin',
+        'GET /api/bills/admin/:billId',
+        'POST /api/bills',
+        'PATCH /api/bills/:billId/payment',
+        'GET /api/bills/stats/overview'
+      ],
+      client: [
+        'GET /api/client/bills/:clientId',
+        'GET /api/client/bill/:billId',
+        'POST /api/client/feedback',
+        'GET /api/client/feedback/:clientId'
+      ],
+      feedback: [
+        'GET /api/feedback',
+        'POST /api/feedback',
+        'GET /api/feedback/admin',
+        'PATCH /api/feedback/:id/respond'
+      ],
+      health: [
+        'GET /health',
+        'GET /api/health',
+        'GET /api/health/detailed'
+      ]
+    }
   });
 });
 
-// =================================================================
-// ERROR HANDLING MIDDLEWARE
-// =================================================================
-
-// Multer error handling
+// Enhanced error handling middleware
 app.use((error, req, res, next) => {
-  console.error('Error middleware caught:', error);
-  
+  console.error(`Error in request ${req.id}:`, error);
+
+  // Multer errors
   if (error instanceof multer.MulterError) {
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        success: false,
-        message: 'File too large. Maximum size is 50MB.',
-        code: 'FILE_TOO_LARGE'
-      });
-    }
-    if (error.code === 'LIMIT_FILE_COUNT') {
-      return res.status(400).json({
-        success: false,
-        message: 'Too many files. Maximum 10 files allowed.',
-        code: 'TOO_MANY_FILES'
-      });
-    }
+    const multerErrors = {
+      'LIMIT_FILE_SIZE': 'File too large. Maximum size is 50MB.',
+      'LIMIT_FILE_COUNT': 'Too many files. Maximum 10 files allowed.',
+      'LIMIT_UNEXPECTED_FILE': 'Unexpected file field.'
+    };
+
     return res.status(400).json({
       success: false,
-      message: 'File upload error: ' + error.message,
-      code: 'UPLOAD_ERROR'
-    });
-  }
-  
-  if (error.message && error.message.includes('not allowed')) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-      code: 'FILE_TYPE_NOT_ALLOWED'
+      message: multerErrors[error.code] || 'File upload error',
+      code: error.code,
+      requestId: req.id
     });
   }
 
-  if (error.name === 'ValidationError') {
+  // JSON parsing errors
+  if (error.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid JSON in request body',
+      requestId: req.id
+    });
+  }
+
+  // Database errors
+  if (error.name === 'SequelizeValidationError') {
     return res.status(400).json({
       success: false,
       message: 'Validation error',
-      details: error.message,
-      code: 'VALIDATION_ERROR'
+      errors: error.errors.map(e => e.message),
+      requestId: req.id
     });
   }
 
-  if (error.name === 'SequelizeConnectionError') {
-    return res.status(503).json({
-      success: false,
-      message: 'Database connection error',
-      code: 'DATABASE_ERROR'
-    });
-  }
-  
-  res.status(500).json({
+  // Default error
+  const statusCode = error.statusCode || error.status || 500;
+  const message = NODE_ENV === 'production' && statusCode === 500 
+    ? 'Internal server error' 
+    : error.message;
+
+  res.status(statusCode).json({
     success: false,
-    message: 'Internal server error',
-    code: 'INTERNAL_ERROR',
-    error: NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    message,
+    requestId: req.id,
+    ...(NODE_ENV === 'development' && { stack: error.stack })
   });
 });
 
-// =================================================================
+// ============================================================================
 // GRACEFUL SHUTDOWN HANDLING
-// =================================================================
+// ============================================================================
 
-const gracefulShutdown = async (signal) => {
-  console.log(`\n📡 Received ${signal}. Starting graceful shutdown...`);
-  
-  try {
-    // Close database connections
-    await sequelize.close();
-    console.log('✅ Database connections closed');
+function setupGracefulShutdown(server) {
+  const shutdown = async (signal) => {
+    console.log(`\n🔄 Received ${signal}. Starting graceful shutdown...`);
     
-    // Exit process
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Error during graceful shutdown:', error);
-    process.exit(1);
-  }
-};
+    // Stop accepting new requests
+    server.close(async () => {
+      console.log('📡 HTTP server closed');
+      
+      try {
+        // Close database connection
+        await sequelize.close();
+        console.log('🗄️  Database connection closed');
+        
+        console.log('✅ Graceful shutdown complete');
+        process.exit(0);
+      } catch (error) {
+        console.error('❌ Error during shutdown:', error);
+        process.exit(1);
+      }
+    });
 
-// Handle termination signals
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    // Force shutdown after 30 seconds
+    setTimeout(() => {
+      console.error('⏰ Forced shutdown after timeout');
+      process.exit(1);
+    }, 30000);
+  };
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
-  gracefulShutdown('uncaughtException');
-});
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-  gracefulShutdown('unhandledRejection');
-});
-
-// =================================================================
+// ============================================================================
 // SERVER STARTUP
-// =================================================================
+// ============================================================================
 
 async function startServer() {
   try {
-    // Test database connection
-    console.log('🔍 Testing database connection...');
-    await sequelize.authenticate();
-    console.log('✅ Database connection established successfully');
+    console.log('🚀 Starting server...');
+    console.log(`📊 Environment: ${NODE_ENV}`);
+    console.log(`🐘 Node.js version: ${process.version}`);
 
-    // Set up database associations
-    await setupDatabaseAssociations();
+    // Initialize database
+    await initializeDatabase();
 
-    // Sync database (be careful in production)
-    if (NODE_ENV === 'development') {
-      await sequelize.sync({ alter: false });
-      console.log('✅ Database synchronized');
-    }
+    // Mount routes
+    await mountRoutes();
 
-    // Start server
+    // Start HTTP server
     const server = app.listen(PORT, '0.0.0.0', () => {
-      console.log('\n🚀 Server starting up...');
-      console.log(`📡 Environment: ${NODE_ENV}`);
-      console.log(`🌐 Server running on http://0.0.0.0:${PORT}`);
-      console.log(`📁 Uploads directory: ${uploadsDir}`);
-      console.log(`🔒 Security features enabled: ${NODE_ENV === 'production' ? 'Full' : 'Development'}`);
-      console.log('\n📋 Available endpoints:');
-      console.log('   GET  /health - Server health check');
-      console.log('   GET  /api/health - API health check');
-      console.log('   POST /api/auth/signup - User registration');
-      console.log('   POST /api/auth/login - User login');
-      console.log('   GET  /api/users - Get users');
-      console.log('   GET  /api/materials/getdata - Get materials');
-      console.log('   POST /api/materials/submit - Submit material');
-      console.log('   GET  /api/orders - Get orders');
-      console.log('   GET  /api/admin/dashboard - Admin dashboard');
+      console.log(`\n🌐 Server running on port ${PORT}`);
+      console.log(`🔗 Local: http://localhost:${PORT}`);
+      console.log(`🔗 Network: http://192.168.29.161:${PORT}`);
+      console.log(`📋 Environment: ${NODE_ENV === 'production' ? 'Production' : 'Development'}`);
+      
+      console.log('\n📋 Available API endpoints:');
+      console.log('   🔐 Authentication:');
+      console.log('      POST /api/auth/signup');
+      console.log('      POST /api/auth/login');
+      console.log('      GET  /api/auth/profile');
+      
+      console.log('   👑 Admin Management:');
+      console.log('      GET  /api/admin/dashboard');
+      console.log('      GET  /api/admin/dashboard-overview');
+      console.log('      GET  /api/admin/users');
+      console.log('      POST /api/admin/approve-user/:userId');
+      console.log('      GET  /api/admin/feedback');
+      
+      console.log('   💰 Bills & Payments:');
+      console.log('      GET  /api/bills/admin');
+      console.log('      POST /api/bills');
+      console.log('      GET  /api/client/bills/:clientId');
+      
+      console.log('   📝 Feedback System:');
+      console.log('      GET  /api/feedback');
+      console.log('      POST /api/feedback');
+      console.log('      GET  /api/feedback/admin');
+      
+      console.log('   ⚕️  Health Checks:');
+      console.log('      GET  /health');
+      console.log('      GET  /api/health');
+      console.log('      GET  /api/health/detailed');
+      
       console.log('\n✅ Server is ready to accept connections!\n');
     });
 
@@ -526,11 +492,15 @@ async function startServer() {
     server.on('error', (error) => {
       if (error.code === 'EADDRINUSE') {
         console.error(`❌ Port ${PORT} is already in use`);
+        console.log('💡 Try using a different port or kill the process using this port');
       } else {
         console.error('❌ Server error:', error);
       }
       process.exit(1);
     });
+
+    // Setup graceful shutdown
+    setupGracefulShutdown(server);
 
   } catch (error) {
     console.error('❌ Failed to start server:', error);

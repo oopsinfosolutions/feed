@@ -5,6 +5,12 @@ const { Op } = require('sequelize');
 const SignUp = require('../models/signup');
 const router = express.Router();
 
+console.log('✅ auth.js loaded at:', __filename);
+console.log('🔍 Auth routes defined:');
+router.stack.forEach(layer => {
+  console.log(`   ${layer.route.stack[0].method.toUpperCase()} /api/auth${layer.route.path}`);
+});
+
 // =================================================================
 // HELPER FUNCTIONS
 // =================================================================
@@ -203,28 +209,34 @@ router.post('/signup', async (req, res) => {
 });
 
 // User Login
+
 router.post('/login', async (req, res) => {
   try {
+    console.log('\n🔄 === LOGIN ATTEMPT STARTED ===');
+    console.log('📨 Request body:', req.body);
+    console.log('📍 Request headers:', req.headers);
+    
     const { phone, password, email } = req.body;
 
-    console.log('Login attempt:', { phone, email });
-
-    // Validate input - allow login with either phone or email
+    // Enhanced validation with better logging
     if ((!phone && !email) || !password) {
+      console.log('❌ Validation failed: Missing phone/email or password');
       return res.status(400).json({
         success: false,
         error: 'Phone/Email and password are required'
       });
     }
 
-    // Prepare search criteria
+    // Prepare search criteria with logging
     let whereClause = {};
     if (phone) {
       const cleanPhone = phone.replace(/\D/g, '');
       whereClause.phone = cleanPhone;
+      console.log('🔍 Searching by phone:', cleanPhone);
     }
     if (email) {
       whereClause.email = email.toLowerCase().trim();
+      console.log('🔍 Searching by email:', email.toLowerCase().trim());
     }
 
     // If both provided, use OR condition
@@ -236,43 +248,102 @@ router.post('/login', async (req, res) => {
           { email: email.toLowerCase().trim() }
         ]
       };
+      console.log('🔍 Searching with OR condition:', whereClause);
     }
 
-    // Find user
+    console.log('🔍 Final where clause:', JSON.stringify(whereClause, null, 2));
+
+    // Test database connection first
+    try {
+      console.log('🗄️  Testing database connection...');
+      await SignUp.findOne({ limit: 1 });
+      console.log('✅ Database connection successful');
+    } catch (dbError) {
+      console.error('❌ Database connection failed:', dbError);
+      return res.status(500).json({
+        success: false,
+        error: 'Database connection error'
+      });
+    }
+
+    // Find user with enhanced logging
+    console.log('🔍 Searching for user...');
     const user = await SignUp.findOne({ where: whereClause });
 
     if (!user) {
+      console.log('❌ User not found with criteria:', whereClause);
+      
+      // Debug: Show what users exist (be careful in production!)
+      const allUsers = await SignUp.findAll({ 
+        attributes: ['id', 'phone', 'email', 'fullname'],
+        limit: 5 
+      });
+      console.log('📊 Sample users in database:', allUsers.map(u => ({
+        id: u.id,
+        phone: u.phone,
+        email: u.email,
+        fullname: u.fullname
+      })));
+      
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials'
       });
     }
 
-    // Verify password (check both hashed and plain for backward compatibility)
+    console.log('✅ User found:', {
+      id: user.id,
+      phone: user.phone,
+      email: user.email,
+      fullname: user.fullname,
+      type: user.type,
+      isApproved: user.isApproved,
+      status: user.status
+    });
+
+    // Enhanced password verification with logging
+    console.log('🔐 Verifying password...');
     let passwordValid = false;
     
     try {
-      // Try bcrypt first (for new hashed passwords)
-      passwordValid = (password === user.password);
-    } catch (bcryptError) {
-      // If bcrypt fails, try plain text comparison (for old passwords)
-      passwordValid = (password === user.password);
+      // First try bcrypt (for hashed passwords)
+      if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$')) {
+        console.log('🔐 Using bcrypt verification...');
+        passwordValid = await bcrypt.compare(password, user.password);
+      } else {
+        console.log('🔐 Using plain text comparison...');
+        passwordValid = (password === user.password);
+      }
+      
+      console.log('🔐 Password verification result:', passwordValid);
+    } catch (passwordError) {
+      console.error('❌ Password verification error:', passwordError);
+      return res.status(500).json({
+        success: false,
+        error: 'Password verification failed'
+      });
     }
 
     if (!passwordValid) {
+      console.log('❌ Invalid password for user:', user.email);
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials'
       });
     }
 
-    // Check approval status for employee types
+    // Check approval status with enhanced logging
+    console.log('✅ Password valid, checking approval status...');
     const employeeTypesNeedingApproval = [
       'field_employee', 'office_employee', 'sales_purchase',
       'sale_parchase', 'employee', 'officeemp'
     ];
 
     const normalizedType = user.type.toLowerCase().replace(/\s+/g, '_');
+    console.log('👤 User type (normalized):', normalizedType);
+    console.log('🔒 Needs approval:', employeeTypesNeedingApproval.includes(normalizedType));
+    console.log('✅ Is approved:', user.isApproved);
+    console.log('📊 Status:', user.status);
 
     if (employeeTypesNeedingApproval.includes(normalizedType)) {
       if (!user.isApproved || user.status !== 'approved') {
@@ -284,6 +355,7 @@ router.post('/login', async (req, res) => {
           message = 'Your account has been suspended. Please contact admin.';
         }
 
+        console.log(`❌ User not approved: ${message}`);
         return res.status(403).json({
           success: false,
           error: message,
@@ -300,13 +372,21 @@ router.post('/login', async (req, res) => {
       }
     }
 
-    // Update last login
-    await user.update({
-      lastLogin: new Date(),
-      updatedAt: new Date()
-    });
+    // Update last login with error handling
+    try {
+      console.log('📅 Updating last login...');
+      await user.update({
+        lastLogin: new Date(),
+        updatedAt: new Date()
+      });
+      console.log('✅ Last login updated');
+    } catch (updateError) {
+      console.error('⚠️  Warning: Failed to update last login:', updateError);
+      // Don't fail the login for this
+    }
 
     // Generate JWT token
+    console.log('🎫 Generating JWT token...');
     const token = jwt.sign(
       {
         userId: user.id,
@@ -318,7 +398,9 @@ router.post('/login', async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    console.log(`User logged in successfully: ${user.fullname} (${user.email})`);
+    console.log('✅ JWT token generated');
+    console.log(`🎉 Login successful for: ${user.fullname} (${user.email})`);
+    console.log('=== LOGIN ATTEMPT COMPLETED ===\n');
 
     res.status(200).json({
       success: true,
@@ -339,10 +421,15 @@ router.post('/login', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Login Error:', error);
+    console.error('\n❌ === LOGIN ERROR ===');
+    console.error('Error details:', error);
+    console.error('Stack trace:', error.stack);
+    console.error('=== END LOGIN ERROR ===\n');
+    
     res.status(500).json({
       success: false,
-      error: 'Internal server error. Please try again.'
+      error: 'Internal server error. Please try again.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -649,7 +736,11 @@ router.get('/status/:identifier', async (req, res) => {
     });
   }
 });
+console.log('🔍 Auth routes defined:');
+router.stack.forEach(layer => {
+  console.log(`   ${layer.route.stack[0].method.toUpperCase()} /api/auth${layer.route.path}`);
+});
 
 // Export the router and middleware
+router.verifyToken = verifyToken;
 module.exports = router;
-module.exports.verifyToken = verifyToken;

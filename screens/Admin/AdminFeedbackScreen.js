@@ -1,3 +1,6 @@
+
+// File: screens/Admin/AdminFeedbackScreen.js (COMPLETE AND FIXED)
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -11,64 +14,60 @@ import {
   TextInput,
   ActivityIndicator,
   FlatList,
-  RefreshControl
+  RefreshControl,
+  Platform,
+  StatusBar,
+  Animated,
+  Dimensions,
+  KeyboardAvoidingView
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_CONFIG, API_ENDPOINTS, apiUtils } from '../../config/ApiConfig';
 
-import { API_CONFIG, API_ENDPOINTS } from '../config/ApiConfig';
+const { width } = Dimensions.get('window');
+const isIOS = Platform.OS === 'ios';
 
 const AdminFeedbackScreen = ({ navigation }) => {
   const [feedback, setFeedback] = useState([]);
-  const [stats, setStats] = useState({
-    total: 0,
-    pending: 0,
-    reviewed: 0,
-    resolved: 0,
-    recent: 0,
-    averageRating: 0,
-    ratingDistribution: []
-  });
+  const [stats, setStats] = useState({ total: 0, pending: 0, reviewed: 0, averageRating: 0 });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedFeedback, setSelectedFeedback] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showResponseModal, setShowResponseModal] = useState(false);
   const [adminResponse, setAdminResponse] = useState('');
-  const [filters, setFilters] = useState({
-    status: 'all',
-    rating: 'all',
-    search: ''
-  });
+  const [submittingResponse, setSubmittingResponse] = useState(false);
+  const [fadeAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
     loadFeedbackData();
     loadStats();
-  }, [filters]);
+    animateIn();
+  }, []);
+
+  const animateIn = () => {
+    Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
+  };
 
   const loadFeedbackData = async () => {
     try {
-      setLoading(true);
-      
-      const params = new URLSearchParams();
-      if (filters.status !== 'all') params.append('status', filters.status);
-      if (filters.rating !== 'all') params.append('rating', filters.rating);
-      if (filters.search) params.append('search', filters.search);
-      
-      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/feedback?${params.toString()}`, {
+      setLoading(!refreshing);
+      const token = await AsyncStorage.getItem('authToken') || 'dummy-token';
+      const response = await apiUtils.fetchWithRetry(apiUtils.buildUrl(API_ENDPOINTS.ADMIN_FEEDBACK), {
         method: 'GET',
-        headers: {
-          'Authorization': 'Bearer dummy-token',
-          'Content-Type': 'application/json'
-        }
+        headers: apiUtils.getAuthHeaders(token)
       });
 
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
-          setFeedback(data.data.feedback);
+          setFeedback(data.data.feedback || []);
         } else {
           Alert.alert('Error', data.message || 'Failed to fetch feedback');
         }
+      } else if (response.status === 401) {
+        handleAuthError();
       } else {
         Alert.alert('Error', 'Failed to fetch feedback data');
       }
@@ -83,23 +82,31 @@ const AdminFeedbackScreen = ({ navigation }) => {
 
   const loadStats = async () => {
     try {
-      const response = await fetch(`${API_CONFIG.BASE_URL}/api/admin/feedback/stats`, {
+      const token = await AsyncStorage.getItem('authToken') || 'dummy-token';
+      const response = await apiUtils.fetchWithRetry(apiUtils.buildUrl(API_ENDPOINTS.ADMIN_FEEDBACK_STATS), {
         method: 'GET',
-        headers: {
-          'Authorization': 'Bearer dummy-token',
-          'Content-Type': 'application/json'
-        }
+        headers: apiUtils.getAuthHeaders(token)
       });
 
       if (response.ok) {
         const data = await response.json();
-        if (data.success) {
-          setStats(data.data);
-        }
+        if (data.success) setStats(data.data);
       }
     } catch (error) {
       console.error('Error loading stats:', error);
     }
+  };
+
+  const handleAuthError = () => {
+    Alert.alert('Session Expired', 'Your session has expired. Please login again.', [
+      {
+        text: 'OK',
+        onPress: () => {
+          AsyncStorage.multiRemove(['authToken', 'user_data']);
+          navigation.replace('Login');
+        }
+      }
+    ]);
   };
 
   const onRefresh = () => {
@@ -126,21 +133,19 @@ const AdminFeedbackScreen = ({ navigation }) => {
     }
 
     try {
-      const response = await fetch(
-        `${API_CONFIG.BASE_URL}/api/admin/feedback/${selectedFeedback.id}/respond`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Authorization': 'Bearer dummy-token',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            adminResponse: adminResponse.trim(),
-            status: 'reviewed',
-            respondedBy: 1 // Replace with actual admin ID
-          })
-        }
-      );
+      setSubmittingResponse(true);
+      const token = await AsyncStorage.getItem('authToken') || 'dummy-token';
+      const url = apiUtils.buildUrl(API_ENDPOINTS.ADMIN_FEEDBACK_RESPOND.replace(':id', selectedFeedback.id));
+      
+      const response = await apiUtils.fetchWithRetry(url, {
+        method: 'PATCH',
+        headers: apiUtils.getAuthHeaders(token),
+        body: JSON.stringify({
+          adminResponse: adminResponse.trim(),
+          status: 'reviewed',
+          respondedBy: 'admin'
+        })
+      });
 
       if (response.ok) {
         const data = await response.json();
@@ -160,1161 +165,411 @@ const AdminFeedbackScreen = ({ navigation }) => {
     } catch (error) {
       console.error('Error submitting response:', error);
       Alert.alert('Error', 'Network error. Please try again.');
+    } finally {
+      setSubmittingResponse(false);
     }
   };
 
-  const updateFeedbackStatus = async (feedbackId, newStatus) => {
-    try {
-      const response = await fetch(
-        `${API_CONFIG.BASE_URL}/api/admin/feedback/${feedbackId}/status`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Authorization': 'Bearer dummy-token',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ status: newStatus })
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          Alert.alert('Success', 'Status updated successfully');
-          setShowDetailModal(false);
-          loadFeedbackData();
-          loadStats();
-        } else {
-          Alert.alert('Error', data.message || 'Failed to update status');
-        }
-      } else {
-        Alert.alert('Error', 'Failed to update status');
-      }
-    } catch (error) {
-      console.error('Error updating status:', error);
-      Alert.alert('Error', 'Network error. Please try again.');
-    }
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      minimumFractionDigits: 0,
+    }).format(amount || 0);
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'pending':
-        return '#ffc107';
-      case 'reviewed':
-        return '#17a2b8';
-      case 'resolved':
-        return '#28a745';
-      default:
-        return '#6c757d';
-    }
-  };
-
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'pending':
-        return 'schedule';
-      case 'reviewed':
-        return 'visibility';
-      case 'resolved':
-        return 'check-circle';
-      default:
-        return 'help';
-    }
-  };
-
-  const getRatingColor = (rating) => {
-    if (rating >= 4) return '#28a745';
-    if (rating >= 3) return '#ffc107';
-    return '#dc3545';
-  };
-
-  const StarDisplay = ({ rating }) => {
-    return (
-      <View style={styles.starContainer}>
-        {[1, 2, 3, 4, 5].map((star) => (
-          <Icon
-            key={star}
-            name={star <= rating ? 'star' : 'star-border'}
-            size={16}
-            color={star <= rating ? '#FFD700' : '#DDD'}
-          />
-        ))}
-        <Text style={[styles.ratingNumber, { color: getRatingColor(rating) }]}>
-          {rating}/5
-        </Text>
-      </View>
-    );
-  };
-
-  const renderStatsCard = (title, value, icon, color, subtitle) => (
-    <View style={[styles.statsCard, { borderLeftColor: color }]}>
-      <View style={styles.statsCardContent}>
-        <View style={styles.statsTextContainer}>
-          <Text style={styles.statsValue}>{value}</Text>
-          <Text style={styles.statsTitle}>{title}</Text>
-          {subtitle && <Text style={styles.statsSubtitle}>{subtitle}</Text>}
-        </View>
-        <View style={[styles.statsIcon, { backgroundColor: color }]}>
-          <Icon name={icon} size={24} color="#fff" />
-        </View>
-      </View>
-    </View>
-  );
-
-  const renderFilterSection = () => (
-    <View style={styles.filterSection}>
-      <Text style={styles.filterTitle}>
-        <Icon name="filter-list" size={20} color="#333" /> Filters
-      </Text>
-      
-      <View style={styles.filterRow}>
-        <View style={styles.filterGroup}>
-          <Text style={styles.filterLabel}>Status:</Text>
-          <View style={styles.filterButtons}>
-            {['all', 'pending', 'reviewed', 'resolved'].map((status) => (
-              <TouchableOpacity
-                key={status}
-                style={[
-                  styles.filterButton,
-                  filters.status === status && styles.activeFilterButton
-                ]}
-                onPress={() => setFilters(prev => ({ ...prev, status }))}
-              >
-                <Text style={[
-                  styles.filterButtonText,
-                  filters.status === status && styles.activeFilterButtonText
-                ]}>
-                  {status.charAt(0).toUpperCase() + status.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.filterRow}>
-        <View style={styles.filterGroup}>
-          <Text style={styles.filterLabel}>Rating:</Text>
-          <View style={styles.filterButtons}>
-            {['all', '5', '4', '3', '2', '1'].map((rating) => (
-              <TouchableOpacity
-                key={rating}
-                style={[
-                  styles.filterButton,
-                  filters.rating === rating && styles.activeFilterButton
-                ]}
-                onPress={() => setFilters(prev => ({ ...prev, rating }))}
-              >
-                <Text style={[
-                  styles.filterButtonText,
-                  filters.rating === rating && styles.activeFilterButtonText
-                ]}>
-                  {rating === 'all' ? 'All' : `${rating}★`}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.searchContainer}>
-        <Icon name="search" size={20} color="#666" style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search feedback comments or client names..."
-          value={filters.search}
-          onChangeText={(text) => setFilters(prev => ({ ...prev, search: text }))}
-          placeholderTextColor="#999"
-        />
-        {filters.search && (
-          <TouchableOpacity
-            style={styles.clearSearchButton}
-            onPress={() => setFilters(prev => ({ ...prev, search: '' }))}
-          >
-            <Icon name="clear" size={20} color="#666" />
-          </TouchableOpacity>
-        )}
-      </View>
+  const renderStarRating = (rating) => (
+    <View style={feedbackStyles.starRating}>
+      {[1, 2, 3, 4, 5].map((star) => (
+        <Icon key={star} name="star" size={16} color={star <= rating ? '#FFD700' : '#E0E0E0'} style={{ marginRight: 2 }} />
+      ))}
     </View>
   );
 
   const renderFeedbackItem = ({ item }) => (
-    <TouchableOpacity 
-      style={styles.feedbackCard}
-      onPress={() => handleFeedbackPress(item)}
-    >
-      <View style={styles.feedbackHeader}>
-        <View style={styles.feedbackHeaderLeft}>
-          <View style={styles.clientInfo}>
-            <Icon name="account-circle" size={20} color="#007bff" />
-            <Text style={styles.clientName}>{item.Client?.fullname || 'Unknown Client'}</Text>
-          </View>
-          <Text style={styles.billNumber}>
-            <Icon name="receipt" size={16} color="#666" />
-            {item.Bill?.billNumber || 'N/A'}
-          </Text>
-        </View>
-        <View style={styles.feedbackHeaderRight}>
-          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
-            <Icon name={getStatusIcon(item.status)} size={14} color="#fff" />
-            <Text style={styles.statusText}>{item.status.toUpperCase()}</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.feedbackContent}>
-        <View style={styles.ratingRow}>
-          <StarDisplay rating={item.rating} />
-          <Text style={styles.feedbackDate}>
-            {new Date(item.submittedAt).toLocaleDateString()}
-          </Text>
-        </View>
-        
-        <Text style={styles.feedbackComments} numberOfLines={2}>
-          {item.comments}
-        </Text>
-        
-        {item.improvementSuggestions && (
-          <Text style={styles.improvementSuggestions} numberOfLines={1}>
-            <Icon name="lightbulb-outline" size={16} color="#ffc107" />
-            {item.improvementSuggestions}
-          </Text>
-        )}
-      </View>
-
-      <View style={styles.feedbackActions}>
-        {item.adminResponse ? (
-          <View style={styles.responseIndicator}>
-            <Icon name="reply" size={16} color="#28a745" />
-            <Text style={styles.responseText}>Response provided</Text>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={styles.respondButton}
-            onPress={(e) => {
-              e.stopPropagation();
-              handleRespondPress(item);
-            }}
-          >
-            <Icon name="reply" size={16} color="#007bff" />
-            <Text style={styles.respondButtonText}>Respond</Text>
-          </TouchableOpacity>
-        )}
-        
-        <Icon name="chevron-right" size={20} color="#007bff" />
-      </View>
-    </TouchableOpacity>
-  );
-
-  return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Icon name="arrow-back" size={24} color="#fff" />
-        </TouchableOpacity>
-        <View style={styles.headerContent}>
-          <Icon name="feedback" size={24} color="#fff" />
-          <Text style={styles.headerTitle}>Customer Feedback</Text>
-        </View>
-        <TouchableOpacity 
-          style={styles.exportButton}
-          onPress={() => Alert.alert('Export', 'Export functionality can be implemented here')}
-        >
-          <Icon name="file-download" size={24} color="#fff" />
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView
-        style={styles.scrollView}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Stats Section */}
-        <View style={styles.statsSection}>
-          <Text style={styles.sectionTitle}>
-            <Icon name="analytics" size={20} color="#333" /> Overview
-          </Text>
-          <View style={styles.statsGrid}>
-            {renderStatsCard('Total Feedback', stats.total, 'feedback', '#007bff')}
-            {renderStatsCard('Pending', stats.pending, 'schedule', '#ffc107')}
-            {renderStatsCard('Reviewed', stats.reviewed, 'visibility', '#17a2b8')}
-            {renderStatsCard('Resolved', stats.resolved, 'check-circle', '#28a745')}
-          </View>
-          <View style={styles.statsGrid}>
-            {renderStatsCard('Average Rating', stats.averageRating, 'star', '#FFD700', '/ 5.0')}
-            {renderStatsCard('Recent (7 days)', stats.recent, 'trending-up', '#6f42c1')}
-          </View>
-        </View>
-
-        {renderFilterSection()}
-
-        {/* Feedback List */}
-        <View style={styles.feedbackSection}>
-          <Text style={styles.sectionTitle}>
-            <Icon name="comment" size={20} color="#333" /> 
-            Feedback ({feedback.length})
-          </Text>
-          
-          {loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#007bff" />
-              <Text style={styles.loadingText}>Loading feedback...</Text>
+    <Animated.View style={[feedbackStyles.feedbackCardWrapper, { opacity: fadeAnim }]}>
+      <TouchableOpacity style={feedbackStyles.feedbackCard} onPress={() => handleFeedbackPress(item)} activeOpacity={0.7}>
+        <View style={feedbackStyles.feedbackHeader}>
+          <View style={feedbackStyles.clientInfo}>
+            <View style={feedbackStyles.clientAvatar}>
+              <Icon name="person" size={20} color="#4CAF50" />
             </View>
-          ) : feedback.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Icon name="feedback" size={64} color="#ccc" />
-              <Text style={styles.emptyStateText}>No feedback found</Text>
-              <Text style={styles.emptyStateSubtext}>
-                Customer feedback will appear here once submitted
+            <View style={feedbackStyles.clientDetails}>
+              <Text style={feedbackStyles.clientName}>{item.Client?.fullname || 'Unknown Client'}</Text>
+              <Text style={feedbackStyles.feedbackDate}>
+                {new Date(item.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
               </Text>
             </View>
-          ) : (
-            <FlatList
-              data={feedback}
-              renderItem={renderFeedbackItem}
-              keyExtractor={(item) => item.id.toString()}
-              scrollEnabled={false}
-              showsVerticalScrollIndicator={false}
-            />
-          )}
+          </View>
+          {renderStarRating(item.rating)}
         </View>
-      </ScrollView>
+        
+        <Text style={feedbackStyles.feedbackText} numberOfLines={2}>{item.detail}</Text>
+        
+        <View style={feedbackStyles.feedbackFooter}>
+          <View style={[feedbackStyles.statusBadge, feedbackStyles[`status${item.status || 'submitted'}`]]}>
+            <Text style={feedbackStyles.statusText}>{item.status || 'submitted'}</Text>
+          </View>
+          
+          <TouchableOpacity style={feedbackStyles.respondButton} onPress={() => handleRespondPress(item)} activeOpacity={0.7}>
+            <Icon name="reply" size={16} color="#4CAF50" />
+            <Text style={feedbackStyles.respondButtonText}>{item.adminResponse ? 'Update' : 'Respond'}</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
 
-      {/* Feedback Detail Modal */}
-      <Modal
-        visible={showDetailModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-      >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <View style={styles.modalHeaderContent}>
-              <Icon name="feedback" size={24} color="#333" />
-              <Text style={styles.modalTitle}>Feedback Details</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setShowDetailModal(false)}
-            >
-              <Icon name="close" size={24} color="#333" />
+  const renderStatCard = (title, value, color) => (
+    <View style={[feedbackStyles.statCard, { borderLeftColor: color }]}>
+      <Text style={[feedbackStyles.statNumber, { color }]}>{value}</Text>
+      <Text style={feedbackStyles.statLabel}>{title}</Text>
+    </View>
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={feedbackStyles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
+        <View style={feedbackStyles.loadingContainer}>
+          <ActivityIndicator size={isIOS ? "large" : 50} color="#4CAF50" />
+          <Text style={feedbackStyles.loadingText}>Loading Feedback...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={feedbackStyles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      
+      {/* Header */}
+      <View style={feedbackStyles.header}>
+        <TouchableOpacity style={feedbackStyles.backButton} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+          <Icon name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <View style={feedbackStyles.headerContent}>
+          <Text style={feedbackStyles.headerTitle}>Feedback Center</Text>
+          <Text style={feedbackStyles.headerSubtitle}>{stats.total} total • {stats.pending} pending responses</Text>
+        </View>
+      </View>
+
+      {/* Statistics */}
+      <Animated.View style={[feedbackStyles.statsContainer, { opacity: fadeAnim }]}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={feedbackStyles.statsContent}>
+          {renderStatCard('Total', stats.total, '#4CAF50')}
+          {renderStatCard('Pending', stats.pending, '#FF9800')}
+          {renderStatCard('Reviewed', stats.reviewed, '#2196F3')}
+          {renderStatCard('Avg Rating', stats.averageRating.toFixed(1), '#9C27B0')}
+        </ScrollView>
+      </Animated.View>
+
+      {/* Feedback List */}
+      <FlatList
+        data={feedback}
+        renderItem={renderFeedbackItem}
+        keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={feedbackStyles.listContainer}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#4CAF50']} tintColor="#4CAF50" />}
+        ListEmptyComponent={
+          <Animated.View style={[feedbackStyles.emptyContainer, { opacity: fadeAnim }]}>
+            <Icon name="feedback" size={64} color="#E0E0E0" />
+            <Text style={feedbackStyles.emptyText}>No feedback found</Text>
+            <Text style={feedbackStyles.emptySubtext}>Feedback will appear here when customers submit reviews</Text>
+          </Animated.View>
+        }
+        showsVerticalScrollIndicator={false}
+      />
+
+      {/* Detail Modal */}
+      <Modal visible={showDetailModal} animationType="slide" presentationStyle={isIOS ? "pageSheet" : "fullScreen"} onRequestClose={() => setShowDetailModal(false)}>
+        <SafeAreaView style={feedbackStyles.modalContainer}>
+          <StatusBar barStyle="dark-content" />
+          <View style={feedbackStyles.modalHeader}>
+            <Text style={feedbackStyles.modalTitle}>Feedback Details</Text>
+            <TouchableOpacity style={feedbackStyles.closeButton} onPress={() => setShowDetailModal(false)} activeOpacity={0.7}>
+              <Icon name="close" size={24} color="#666" />
             </TouchableOpacity>
           </View>
-
-          <ScrollView style={styles.modalContent}>
-            {selectedFeedback && (
-              <>
-                {/* Client Information */}
-                <View style={styles.detailSection}>
-                  <View style={styles.detailSectionHeader}>
-                    <Icon name="account-circle" size={20} color="#007bff" />
-                    <Text style={styles.detailSectionTitle}>Client Information</Text>
+          
+          {selectedFeedback && (
+            <ScrollView style={feedbackStyles.modalContent} showsVerticalScrollIndicator={false}>
+              <View style={feedbackStyles.detailCard}>
+                <View style={feedbackStyles.detailHeader}>
+                  <View style={feedbackStyles.clientAvatarLarge}>
+                    <Icon name="person" size={32} color="#4CAF50" />
                   </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Name:</Text>
-                    <Text style={styles.detailValue}>
-                      {selectedFeedback.Client?.fullname || 'N/A'}
-                    </Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Email:</Text>
-                    <Text style={styles.detailValue}>{selectedFeedback.Client?.email || 'N/A'}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Phone:</Text>
-                    <Text style={styles.detailValue}>{selectedFeedback.Client?.phone || 'N/A'}</Text>
-                  </View>
-                </View>
-
-                {/* Bill Information */}
-                <View style={styles.detailSection}>
-                  <View style={styles.detailSectionHeader}>
-                    <Icon name="receipt" size={20} color="#007bff" />
-                    <Text style={styles.detailSectionTitle}>Bill Information</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Bill Number:</Text>
-                    <Text style={styles.detailValue}>{selectedFeedback.Bill?.billNumber || 'N/A'}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Material:</Text>
-                    <Text style={styles.detailValue}>{selectedFeedback.Bill?.materialName || 'N/A'}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Amount:</Text>
-                    <Text style={styles.detailValue}>
-                      ₹{parseFloat(selectedFeedback.Bill?.totalAmount || 0).toFixed(2)}
+                  <View style={feedbackStyles.clientDetailsLarge}>
+                    <Text style={feedbackStyles.clientNameLarge}>{selectedFeedback.Client?.fullname || 'Unknown Client'}</Text>
+                    <Text style={feedbackStyles.clientEmail}>{selectedFeedback.Client?.email || 'No email'}</Text>
+                    <Text style={feedbackStyles.feedbackDateLarge}>
+                      {new Date(selectedFeedback.createdAt).toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                     </Text>
                   </View>
                 </View>
-
-                {/* Feedback Details */}
-                <View style={styles.detailSection}>
-                  <View style={styles.detailSectionHeader}>
-                    <Icon name="star" size={20} color="#FFD700" />
-                    <Text style={styles.detailSectionTitle}>Feedback</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Rating:</Text>
-                    <StarDisplay rating={selectedFeedback.rating} />
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Status:</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(selectedFeedback.status) }]}>
-                      <Icon name={getStatusIcon(selectedFeedback.status)} size={14} color="#fff" />
-                      <Text style={styles.statusText}>{selectedFeedback.status.toUpperCase()}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Submitted:</Text>
-                    <Text style={styles.detailValue}>
-                      {new Date(selectedFeedback.submittedAt).toLocaleDateString()} at{' '}
-                      {new Date(selectedFeedback.submittedAt).toLocaleTimeString()}
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.commentsSection}>
-                    <Text style={styles.detailLabel}>Comments:</Text>
-                    <Text style={styles.commentsText}>{selectedFeedback.comments}</Text>
-                  </View>
-                  
-                  {selectedFeedback.improvementSuggestions && (
-                    <View style={styles.commentsSection}>
-                      <Text style={styles.detailLabel}>Improvement Suggestions:</Text>
-                      <Text style={styles.commentsText}>{selectedFeedback.improvementSuggestions}</Text>
-                    </View>
-                  )}
+                
+                <View style={feedbackStyles.ratingSection}>
+                  <Text style={feedbackStyles.ratingLabel}>Rating</Text>
+                  {renderStarRating(selectedFeedback.rating)}
+                  <Text style={feedbackStyles.ratingText}>{selectedFeedback.rating} out of 5 stars</Text>
                 </View>
-
-                {/* Admin Response Section */}
+                
+                <View style={feedbackStyles.feedbackSection}>
+                  <Text style={feedbackStyles.sectionLabel}>Feedback</Text>
+                  <Text style={feedbackStyles.feedbackDetailText}>{selectedFeedback.detail}</Text>
+                </View>
+                
+                {selectedFeedback.recommendations && (
+                  <View style={feedbackStyles.recommendationsSection}>
+                    <Text style={feedbackStyles.sectionLabel}>Recommendations</Text>
+                    <Text style={feedbackStyles.recommendationsText}>{selectedFeedback.recommendations}</Text>
+                  </View>
+                )}
+                
                 {selectedFeedback.adminResponse && (
-                  <View style={styles.detailSection}>
-                    <View style={styles.detailSectionHeader}>
-                      <Icon name="admin-panel-settings" size={20} color="#28a745" />
-                      <Text style={styles.detailSectionTitle}>Admin Response</Text>
-                    </View>
-                    <View style={styles.responseSection}>
-                      <Text style={styles.responseText}>{selectedFeedback.adminResponse}</Text>
-                      {selectedFeedback.respondedAt && (
-                        <Text style={styles.responseDate}>
-                          Responded on {new Date(selectedFeedback.respondedAt).toLocaleDateString()} at{' '}
-                          {new Date(selectedFeedback.respondedAt).toLocaleTimeString()}
-                        </Text>
-                      )}
+                  <View style={feedbackStyles.responseSection}>
+                    <Text style={feedbackStyles.sectionLabel}>Admin Response</Text>
+                    <View style={feedbackStyles.responseCard}>
+                      <Text style={feedbackStyles.responseText}>{selectedFeedback.adminResponse}</Text>
+                      <Text style={feedbackStyles.responseDate}>
+                        Responded on {new Date(selectedFeedback.respondedAt || selectedFeedback.updatedAt).toLocaleDateString()}
+                      </Text>
                     </View>
                   </View>
                 )}
-
-                {/* Action Buttons */}
-                <View style={styles.actionButtonsContainer}>
-                  {!selectedFeedback.adminResponse && (
-                    <TouchableOpacity
-                      style={styles.respondActionButton}
-                      onPress={() => {
-                        setShowDetailModal(false);
-                        setTimeout(() => handleRespondPress(selectedFeedback), 300);
-                      }}
-                    >
-                      <Icon name="reply" size={20} color="#fff" />
-                      <Text style={styles.actionButtonText}>Respond to Feedback</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {selectedFeedback.status !== 'resolved' && (
-                    <TouchableOpacity
-                      style={styles.resolveActionButton}
-                      onPress={() => updateFeedbackStatus(selectedFeedback.id, 'resolved')}
-                    >
-                      <Icon name="check-circle" size={20} color="#fff" />
-                      <Text style={styles.actionButtonText}>Mark as Resolved</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {selectedFeedback.status === 'resolved' && (
-                    <TouchableOpacity
-                      style={styles.reopenActionButton}
-                      onPress={() => updateFeedbackStatus(selectedFeedback.id, 'reviewed')}
-                    >
-                      <Icon name="refresh" size={20} color="#fff" />
-                      <Text style={styles.actionButtonText}>Reopen Feedback</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </>
-            )}
-          </ScrollView>
+                
+                <TouchableOpacity
+                  style={feedbackStyles.respondActionButton}
+                  onPress={() => { setShowDetailModal(false); handleRespondPress(selectedFeedback); }}
+                  activeOpacity={0.7}
+                >
+                  <Icon name="reply" size={20} color="#fff" />
+                  <Text style={feedbackStyles.respondActionText}>
+                    {selectedFeedback.adminResponse ? 'Update Response' : 'Respond to Feedback'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          )}
         </SafeAreaView>
       </Modal>
 
       {/* Response Modal */}
-      <Modal
-        visible={showResponseModal}
-        animationType="slide"
-        presentationStyle="formSheet"
-      >
-        <SafeAreaView style={styles.responseModalContainer}>
-          <View style={styles.modalHeader}>
-            <View style={styles.modalHeaderContent}>
-              <Icon name="reply" size={24} color="#333" />
-              <Text style={styles.modalTitle}>Respond to Feedback</Text>
+      <Modal visible={showResponseModal} animationType="slide" presentationStyle={isIOS ? "pageSheet" : "fullScreen"} onRequestClose={() => setShowResponseModal(false)}>
+        <KeyboardAvoidingView behavior={isIOS ? "padding" : "height"} style={feedbackStyles.modalContainer}>
+          <SafeAreaView style={feedbackStyles.modalContainer}>
+            <StatusBar barStyle="dark-content" />
+            <View style={feedbackStyles.modalHeader}>
+              <Text style={feedbackStyles.modalTitle}>Respond to Feedback</Text>
+              <TouchableOpacity style={feedbackStyles.closeButton} onPress={() => setShowResponseModal(false)} activeOpacity={0.7}>
+                <Icon name="close" size={24} color="#666" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setShowResponseModal(false)}
-            >
-              <Icon name="close" size={24} color="#333" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={styles.responseForm}>
-            {selectedFeedback && (
-              <>
-                {/* Feedback Summary */}
-                <View style={styles.feedbackSummary}>
-                  <Text style={styles.summaryTitle}>Original Feedback:</Text>
-                  <View style={styles.summaryContent}>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Client:</Text>
-                      <Text style={styles.summaryValue}>{selectedFeedback.Client?.fullname}</Text>
+            
+            <ScrollView style={feedbackStyles.modalContent} showsVerticalScrollIndicator={false}>
+              {selectedFeedback && (
+                <>
+                  <View style={feedbackStyles.feedbackPreview}>
+                    <View style={feedbackStyles.previewHeader}>
+                      <Icon name="feedback" size={20} color="#666" />
+                      <Text style={feedbackStyles.previewLabel}>Original Feedback</Text>
                     </View>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Rating:</Text>
-                      <StarDisplay rating={selectedFeedback.rating} />
+                    <Text style={feedbackStyles.previewText}>{selectedFeedback.detail}</Text>
+                    <View style={feedbackStyles.previewRating}>
+                      {renderStarRating(selectedFeedback.rating)}
+                      <Text style={feedbackStyles.previewRatingText}>by {selectedFeedback.Client?.fullname}</Text>
                     </View>
-                    <Text style={styles.summaryComments}>{selectedFeedback.comments}</Text>
                   </View>
-                </View>
-
-                {/* Response Input */}
-                <View style={styles.responseInputContainer}>
-                  <Text style={styles.responseInputLabel}>Your Response *</Text>
-                  <View style={styles.responseInputWrapper}>
-                    <Icon name="message" size={20} color="#666" style={styles.responseInputIcon} />
+                  
+                  <View style={feedbackStyles.responseForm}>
+                    <Text style={feedbackStyles.inputLabel}>Your Response</Text>
                     <TextInput
-                      style={styles.responseTextInput}
+                      style={feedbackStyles.responseInput}
                       value={adminResponse}
                       onChangeText={setAdminResponse}
-                      placeholder="Provide a helpful response to the customer's feedback..."
-                      placeholderTextColor="#999"
+                      placeholder="Write a thoughtful response to address the customer's feedback..."
                       multiline
-                      numberOfLines={6}
+                      numberOfLines={isIOS ? 8 : 6}
                       textAlignVertical="top"
+                      placeholderTextColor="#999"
                     />
-                  </View>
-                </View>
-
-                {/* Response Templates */}
-                <View style={styles.templatesContainer}>
-                  <Text style={styles.templatesTitle}>Quick Response Templates:</Text>
-                  <View style={styles.templateButtons}>
+                    
                     <TouchableOpacity
-                      style={styles.templateButton}
-                      onPress={() => setAdminResponse("Thank you for your valuable feedback. We appreciate your input and will work to improve our services.")}
+                      style={[feedbackStyles.submitButton, submittingResponse && feedbackStyles.disabledButton]}
+                      onPress={submitResponse}
+                      disabled={submittingResponse}
+                      activeOpacity={0.7}
                     >
-                      <Text style={styles.templateButtonText}>Thank You</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.templateButton}
-                      onPress={() => setAdminResponse("We sincerely apologize for any inconvenience caused. We are taking immediate steps to address this issue.")}
-                    >
-                      <Text style={styles.templateButtonText}>Apology</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.templateButton}
-                      onPress={() => setAdminResponse("Thank you for the positive feedback! We're glad you had a great experience with our service.")}
-                    >
-                      <Text style={styles.templateButtonText}>Positive Response</Text>
+                      {submittingResponse ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <>
+                          <Icon name="send" size={20} color="#fff" />
+                          <Text style={feedbackStyles.submitButtonText}>
+                            {selectedFeedback?.adminResponse ? 'Update Response' : 'Submit Response'}
+                          </Text>
+                        </>
+                      )}
                     </TouchableOpacity>
                   </View>
-                </View>
-
-                {/* Submit Button */}
-                <TouchableOpacity
-                  style={styles.submitResponseButton}
-                  onPress={submitResponse}
-                >
-                  <Icon name="send" size={20} color="#fff" />
-                  <Text style={styles.submitResponseText}>Send Response</Text>
-                </TouchableOpacity>
-
-                <View style={styles.responseNote}>
-                  <Icon name="info" size={16} color="#666" />
-                  <Text style={styles.responseNoteText}>
-                    Your response will be visible to the customer and will help improve their experience.
-                  </Text>
-                </View>
-              </>
-            )}
-          </ScrollView>
-        </SafeAreaView>
+                </>
+              )}
+            </ScrollView>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5'
-  },
+const feedbackStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f8f9fa' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingText: { marginTop: 16, fontSize: 16, color: '#666', fontWeight: '500' },
   header: {
-    backgroundColor: '#007bff',
+    backgroundColor: '#ffffff',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 20
+    paddingHorizontal: 16,
+    paddingVertical: isIOS ? 16 : 20,
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 }, android: { elevation: 4 } }),
   },
-  backButton: {
-    padding: 8
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    justifyContent: 'center'
-  },
+  backButton: { padding: 8, marginRight: 16 },
+  headerContent: { flex: 1 },
   headerTitle: {
-    color: '#fff',
     fontSize: 20,
     fontWeight: 'bold',
-    marginLeft: 8
+    color: '#1a1a1a',
+    ...Platform.select({ ios: { fontFamily: 'System' }, android: { fontFamily: 'Roboto' } }),
   },
-  exportButton: {
-    padding: 8
-  },
-  scrollView: {
-    flex: 1
-  },
-  statsSection: {
-    padding: 20,
-    backgroundColor: '#fff',
-    marginBottom: 10
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10
-  },
-  statsCard: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 15,
-    flex: 1,
-    marginHorizontal: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    borderLeftWidth: 4
-  },
-  statsCardContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  statsTextContainer: {
-    flex: 1
-  },
-  statsValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333'
-  },
-  statsTitle: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 2
-  },
-  statsSubtitle: {
-    fontSize: 10,
-    color: '#999'
-  },
-  statsIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  filterSection: {
-    backgroundColor: '#fff',
-    padding: 20,
-    marginBottom: 10
-  },
-  filterTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15
-  },
-  filterRow: {
-    marginBottom: 15
-  },
-  filterGroup: {
-    flex: 1
-  },
-  filterLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 8
-  },
-  filterButtons: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
-  },
-  filterButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    backgroundColor: '#fff'
-  },
-  activeFilterButton: {
-    backgroundColor: '#007bff',
-    borderColor: '#007bff'
-  },
-  filterButtonText: {
-    fontSize: 12,
-    color: '#666'
-  },
-  activeFilterButtonText: {
-    color: '#fff'
-  },
-  searchContainer: {
-    flexDirection: 'row',
+  headerSubtitle: { fontSize: 14, color: '#666', marginTop: 2 },
+  statsContainer: { backgroundColor: '#ffffff', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#E0E0E0' },
+  statsContent: { paddingHorizontal: 16 },
+  statCard: {
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#fff'
-  },
-  searchIcon: {
-    marginRight: 8
-  },
-  searchInput: {
-    flex: 1,
+    paddingHorizontal: 20,
     paddingVertical: 12,
-    fontSize: 16,
-    color: '#333'
-  },
-  clearSearchButton: {
-    padding: 4
-  },
-  feedbackSection: {
-    backgroundColor: '#fff',
-    padding: 20,
-    marginBottom: 20
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    padding: 40
-  },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#666'
-  },
-  emptyState: {
-    alignItems: 'center',
-    padding: 40
-  },
-  emptyStateText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#666',
-    marginTop: 15
-  },
-  emptyStateSubtext: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 5,
-    textAlign: 'center'
-  },
-  feedbackCard: {
+    marginRight: 16,
     backgroundColor: '#f8f9fa',
-    borderRadius: 10,
-    padding: 15,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#e9ecef'
-  },
-  feedbackHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 10
-  },
-  feedbackHeaderLeft: {
-    flex: 1
-  },
-  clientInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4
-  },
-  clientName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-    marginLeft: 8
-  },
-  billNumber: {
-    fontSize: 12,
-    color: '#666',
-    marginLeft: 28
-  },
-  feedbackHeaderRight: {
-    alignItems: 'flex-end'
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
     borderRadius: 12,
-    gap: 4
+    borderLeftWidth: 3,
+    minWidth: 80,
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2 }, android: { elevation: 2 } }),
   },
-  statusText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: 'bold'
+  statNumber: { fontSize: 24, fontWeight: 'bold' },
+  statLabel: { fontSize: 12, color: '#666', marginTop: 4, fontWeight: '500' },
+  listContainer: { padding: 16 },
+  feedbackCardWrapper: { marginBottom: 12 },
+  feedbackCard: {
+    backgroundColor: '#ffffff',
+    padding: 16,
+    borderRadius: 16,
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 }, android: { elevation: 3 } }),
   },
-  feedbackContent: {
-    marginBottom: 10
-  },
-  ratingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8
-  },
-  starContainer: {
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
-  ratingNumber: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginLeft: 8
-  },
-  feedbackDate: {
-    fontSize: 12,
-    color: '#666'
-  },
-  feedbackComments: {
-    fontSize: 14,
-    color: '#333',
-    lineHeight: 20,
-    marginBottom: 8
-  },
-  improvementSuggestions: {
-    fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
-    marginLeft: 20
-  },
-  feedbackActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  responseIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
-  responseText: {
-    fontSize: 12,
-    color: '#28a745',
-    marginLeft: 4,
-    fontWeight: '500'
-  },
-  respondButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: '#007bff',
-    borderRadius: 15
-  },
-  respondButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '500',
-    marginLeft: 4
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#fff'
-  },
+  feedbackHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
+  clientInfo: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  clientAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#E8F5E8', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  clientDetails: { flex: 1 },
+  clientName: { fontSize: 16, fontWeight: '600', color: '#333' },
+  feedbackDate: { fontSize: 12, color: '#666', marginTop: 2 },
+  starRating: { flexDirection: 'row', alignItems: 'center' },
+  feedbackText: { fontSize: 14, color: '#333', lineHeight: 20, marginBottom: 12 },
+  feedbackFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+  statussubmitted: { backgroundColor: '#FFF3E0' },
+  statusreviewed: { backgroundColor: '#E8F5E8' },
+  statusresolved: { backgroundColor: '#E3F2FD' },
+  statusText: { fontSize: 12, fontWeight: '600', color: '#333' },
+  respondButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#E8F5E8', borderRadius: 8 },
+  respondButtonText: { fontSize: 12, color: '#4CAF50', fontWeight: '600', marginLeft: 4 },
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 60 },
+  emptyText: { fontSize: 18, fontWeight: '600', color: '#666', marginTop: 16, textAlign: 'center' },
+  emptySubtext: { fontSize: 14, color: '#999', marginTop: 8, textAlign: 'center', paddingHorizontal: 20 },
+  modalContainer: { flex: 1, backgroundColor: '#ffffff' },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+    backgroundColor: '#ffffff',
+  },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#333' },
+  closeButton: { padding: 8 },
+  modalContent: { flex: 1, backgroundColor: '#f8f9fa' },
+  detailCard: {
+    margin: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
     padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee'
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 }, android: { elevation: 3 } }),
   },
-  modalHeaderContent: {
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginLeft: 8
-  },
-  closeButton: {
-    padding: 5
-  },
-  modalContent: {
-    flex: 1,
-    padding: 20
-  },
-  detailSection: {
-    marginBottom: 25
-  },
-  detailSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 15
-  },
-  detailSectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-    marginLeft: 8
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0'
-  },
-  detailLabel: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500'
-  },
-  detailValue: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: '500',
-    textAlign: 'right',
-    flex: 1,
-    marginLeft: 10
-  },
-  commentsSection: {
-    marginTop: 10
-  },
-  commentsText: {
-    fontSize: 14,
-    color: '#333',
-    lineHeight: 20,
-    marginTop: 5,
-    padding: 10,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8
-  },
-  responseSection: {
-    padding: 15,
-    backgroundColor: '#e8f5e8',
-    borderRadius: 8,
+  detailHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
+  clientAvatarLarge: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#E8F5E8', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
+  clientDetailsLarge: { flex: 1 },
+  clientNameLarge: { fontSize: 18, fontWeight: 'bold', color: '#333' },
+  clientEmail: { fontSize: 14, color: '#666', marginTop: 2 },
+  feedbackDateLarge: { fontSize: 12, color: '#999', marginTop: 4 },
+  ratingSection: { marginBottom: 24, padding: 16, backgroundColor: '#f8f9fa', borderRadius: 12 },
+  ratingLabel: { fontSize: 14, fontWeight: '600', color: '#666', marginBottom: 8 },
+  ratingText: { fontSize: 14, color: '#333', marginTop: 8 },
+  feedbackSection: { marginBottom: 24 },
+  sectionLabel: { fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 12 },
+  feedbackDetailText: { fontSize: 16, color: '#333', lineHeight: 24, backgroundColor: '#f8f9fa', padding: 16, borderRadius: 12 },
+  recommendationsSection: { marginBottom: 24 },
+  recommendationsText: { fontSize: 16, color: '#333', lineHeight: 24, backgroundColor: '#f0f8f0', padding: 16, borderRadius: 12, borderLeftWidth: 4, borderLeftColor: '#4CAF50' },
+  responseSection: { marginBottom: 24 },
+  responseCard: { backgroundColor: '#e3f2fd', padding: 16, borderRadius: 12, borderLeftWidth: 4, borderLeftColor: '#2196F3' },
+  responseText: { fontSize: 16, color: '#333', lineHeight: 24 },
+  responseDate: { fontSize: 12, color: '#666', marginTop: 8, fontStyle: 'italic' },
+  respondActionButton: { backgroundColor: '#4CAF50', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 16, borderRadius: 12, marginTop: 8 },
+  respondActionText: { color: '#ffffff', fontSize: 16, fontWeight: '600', marginLeft: 8 },
+  feedbackPreview: {
+    margin: 16,
+    backgroundColor: '#ffffff',
+    padding: 16,
+    borderRadius: 12,
     borderLeftWidth: 4,
-    borderLeftColor: '#28a745'
+    borderLeftColor: '#FF9800',
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 4 }, android: { elevation: 2 } }),
   },
-  responseDate: {
-    fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic'
-  },
-  actionButtonsContainer: {
-    gap: 15,
-    marginTop: 20
-  },
-  respondActionButton: {
-    backgroundColor: '#007bff',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 15,
-    borderRadius: 10,
-    gap: 10
-  },
-  resolveActionButton: {
-    backgroundColor: '#28a745',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 15,
-    borderRadius: 10,
-    gap: 10
-  },
-  reopenActionButton: {
-    backgroundColor: '#ffc107',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 15,
-    borderRadius: 10,
-    gap: 10
-  },
-  actionButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold'
-  },
-  responseModalContainer: {
-    flex: 1,
-    backgroundColor: '#fff'
-  },
+  previewHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  previewLabel: { fontSize: 14, fontWeight: '600', color: '#666', marginLeft: 8 },
+  previewText: { fontSize: 14, color: '#333', lineHeight: 20, marginBottom: 12 },
+  previewRating: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  previewRatingText: { fontSize: 12, color: '#666' },
   responseForm: {
-    flex: 1,
-    padding: 20
+    margin: 16,
+    backgroundColor: '#ffffff',
+    padding: 16,
+    borderRadius: 12,
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 4 }, android: { elevation: 2 } }),
   },
-  feedbackSummary: {
+  inputLabel: { fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 12 },
+  responseInput: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    minHeight: isIOS ? 120 : 100,
+    marginBottom: 20,
     backgroundColor: '#f8f9fa',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 20
+    ...Platform.select({ ios: { fontFamily: 'System' }, android: { fontFamily: 'Roboto', textAlignVertical: 'top' } }),
   },
-  summaryTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10
-  },
-  summaryContent: {
-    gap: 8
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  summaryLabel: {
-    fontSize: 14,
-    color: '#666'
-  },
-  summaryValue: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: '500'
-  },
-  summaryComments: {
-    fontSize: 14,
-    color: '#333',
-    fontStyle: 'italic',
-    marginTop: 8,
-    padding: 10,
-    backgroundColor: '#fff',
-    borderRadius: 5
-  },
-  responseInputContainer: {
-    marginBottom: 20
-  },
-  responseInputLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 10
-  },
-  responseInputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingTop: 12
-  },
-  responseInputIcon: {
-    marginRight: 8,
-    marginTop: 2
-  },
-  responseTextInput: {
-    flex: 1,
-    minHeight: 120,
-    fontSize: 16,
-    color: '#333',
-    textAlignVertical: 'top',
-    paddingVertical: 0
-  },
-  templatesContainer: {
-    marginBottom: 20
-  },
-  templatesTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 10
-  },
-  templateButtons: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
-  },
-  templateButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#e9ecef',
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: '#dee2e6'
-  },
-  templateButtonText: {
-    fontSize: 12,
-    color: '#495057'
-  },
-  submitResponseButton: {
-    backgroundColor: '#28a745',
+  submitButton: {
+    backgroundColor: '#4CAF50',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 20,
-    gap: 10
+    paddingVertical: 16,
+    borderRadius: 12,
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4 }, android: { elevation: 4 } }),
   },
-  submitResponseText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold'
-  },
-  responseNote: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#e3f2fd',
-    padding: 15,
-    borderRadius: 8,
-    gap: 10
-  },
-  responseNoteText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#666',
-    lineHeight: 20
-  }
+  disabledButton: { backgroundColor: '#CCC' },
+  submitButtonText: { color: '#ffffff', fontSize: 16, fontWeight: '600', marginLeft: 8 },
 });
 
 export default AdminFeedbackScreen;
